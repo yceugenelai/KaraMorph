@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="KaraMorph balanced ellipse logo v2">
+  <title>KaraMorph balanced ellipse logo v2</title>
+  <defs>
+    <style>
+      .amber{stroke:#F7A614;}
+      .green{stroke:#10CF75;}
+      .blue{fill:#156CF3; stroke:#156CF3;}
+      .orbit{fill:none; stroke-width:24; stroke-linecap:round;}
+      .micline{fill:none; stroke:#156CF3; stroke-width:16; stroke-linecap:round; stroke-linejoin:round;}
+    </style>
+  </defs>
+
+  <!-- 45-degree ellipse, major axis from top-right to bottom-left, with shorter minor axis -->
+  <g transform="rotate(45 128 128)">
+    <path class="orbit amber" d="M 58 128 A 70 111 0 1 1 198 128"/>
+    <path class="orbit green" d="M 198 128 A 70 111 0 1 1 58 128"/>
+  </g>
+
+  <!-- centered microphone kept fully inside ellipse -->
+  <rect class="blue" x="102" y="66" width="52" height="84" rx="26"/>
+  <path class="micline" d="M 91 129 V 139 C 91 161 108 178 128 178 C 148 178 165 161 165 139 V 129"/>
+  <rect class="blue" x="121" y="178" width="14" height="24" rx="7"/>
+  <rect class="blue" x="96" y="202" width="64" height="20" rx="10"/>
+</svg>

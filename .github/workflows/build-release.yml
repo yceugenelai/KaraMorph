@@ -1,0 +1,89 @@
+name: Build release
+run-name: Build ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.1.0-preview.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check version is new
+        run: |
+          if ($env:VERSION -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)?$') {
+            throw 'Use a version such as v0.1.0 or v0.1.0-preview.1.'
+          }
+          git ls-remote --exit-code --tags origin "refs/tags/$env:VERSION"
+          if ($LASTEXITCODE -eq 0) { throw 'This tag already exists. Use a new version.' }
+          if ($LASTEXITCODE -ne 2) { throw 'Could not check existing tags.' }
+          $releases = gh api --paginate "repos/$env:GH_REPO/releases" --jq '.[].tag_name'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not check existing releases.' }
+          if ($env:VERSION -in $releases) { throw 'This release already exists. Use a new version.' }
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install build dependency
+        run: python -m pip install PySide6==6.11.2
+
+      - name: Build lightweight ZIP
+        run: |
+          $buildPython = (Get-Command python).Source
+          & ./scripts/build-bootstrap-poc.ps1 -UiPython $buildPython
+
+      - name: Verify ZIP and export matching source
+        run: |
+          python scripts/review_bootstrap_zip.py dist/KaraMorph-bootstrap-poc.zip
+          if ($LASTEXITCODE -ne 0) { throw 'ZIP verification failed.' }
+          python scripts/export_source.py
+          if ($LASTEXITCODE -ne 0) { throw 'Source export failed.' }
+          $sourceZip = Get-Item dist/*-source.zip
+          $sourceName = "KaraMorph-$env:VERSION-source.zip"
+          Rename-Item -LiteralPath $sourceZip.FullName -NewName $sourceName
+          $hash = (Get-FileHash "dist/$sourceName" -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content "dist/$sourceName.sha256" "$hash  $sourceName" -Encoding utf8NoBOM
+
+      - name: Create tag and draft release
+        run: |
+          gh api "repos/$env:GH_REPO/git/refs" -f "ref=refs/tags/$env:VERSION" -f "sha=$env:GITHUB_SHA"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not create version tag.' }
+          $notes = @"
+          Extract the entire KaraMorph-bootstrap-poc.zip into a writable folder and run KaraMorph.exe.
+          Internet is required for first-run setup. Runtimes and models are downloaded after launch.
+
+          Built from commit: $env:GITHUB_SHA
+          Download and test the ZIP before publishing this draft.
+          "@
+          Set-Content release-notes.txt $notes -Encoding utf8NoBOM
+          gh release create $env:VERSION --verify-tag --draft --title "KaraMorph $env:VERSION" --notes-file release-notes.txt `
+            dist/KaraMorph-bootstrap-poc.zip `
+            dist/KaraMorph-bootstrap-poc.zip.sha256 `
+            dist/KaraMorph-bootstrap-poc.distribution.json `
+            "dist/KaraMorph-$env:VERSION-source.zip" `
+            "dist/KaraMorph-$env:VERSION-source.zip.sha256"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not create draft release. The version tag may already exist.' }

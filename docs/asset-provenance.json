@@ -1,0 +1,111 @@
+{
+  "review_date": "2026-10-07",
+  "screenshot_embedded_content_cleared": true,
+  "terms_references": [
+    "https://openai.com/policies/row-terms-of-use/",
+    "https://ai.google.dev/gemini-api/terms",
+    "https://ai.google.dev/gemini-api/docs/image-generation",
+    "https://folkways-media.si.edu/docs/folkways/artwork/SFW40103.pdf",
+    "https://www.copyright.gov/engage/musicians/"
+  ],
+  "assets": [
+    {
+      "path": "assets/icon.svg",
+      "sha256": "28e362c1a60f6b2489b80e1449309412a96b68e3ca0494aa19995d76d954b72a",
+      "provider_or_supplier": "OpenAI",
+      "method": "ChatGPT",
+      "source_evidence": "Project owner statement, 2026-10-06",
+      "review_status": "source_and_owner_license_confirmed",
+      "reuse_license": "rights reserved; KaraMorph project distribution"
+    },
+    {
+      "path": "assets/icon_doc.png",
+      "sha256": "2c49e361ea27a6b4486164e76d7246367855b0084acdf29be5c7fa11acc0c157",
+      "provider_or_supplier": "OpenAI",
+      "method": "ChatGPT",
+      "source_evidence": "Project owner statement, 2026-10-06",
+      "review_status": "source_and_owner_license_confirmed",
+      "reuse_license": "rights reserved; KaraMorph project distribution"
+    },
+    {
+      "path": "assets/icon_ico.svg",
+      "sha256": "d2aac28ceb267dcec3c924ef935f4cfda790bf234e2d99d6a9923ca5573f080f",
+      "provider_or_supplier": "OpenAI",
+      "method": "ChatGPT",
+      "source_evidence": "Project owner statement, 2026-10-06",
+      "review_status": "source_and_owner_license_confirmed",
+      "reuse_license": "rights reserved; KaraMorph project distribution"
+    },
+    {
+      "path": "assets/backgrounds/bg1.jpg",
+      "sha256": "822531d76ec9229b1ca67438d1bf3c69ff7c1cb5cb4b06d6d93f7cf15b17044c",
+      "provider_or_supplier": "Google",
+      "method": "Google AI Studio / paid Nano Banana Pro",
+      "source_evidence": "Project owner statement, 2026-10-06",
+      "review_status": "source_and_owner_license_confirmed",
+      "reuse_license": "MIT"
+    },
+    {
+      "path": "assets/backgrounds/bg2.jpg",
+      "sha256": "1a78fbc8dceaba29912e803048cc07ea82a865d445ba1fb04da9f06b9a7b405c",
+      "provider_or_supplier": "Google",
+      "method": "Google AI Studio / paid Nano Banana Pro",
+      "source_evidence": "Project owner statement, 2026-10-06",
+      "review_status": "source_and_owner_license_confirmed",
+      "reuse_license": "MIT"
+    },
+    {
+      "path": "assets/backgrounds/bg4.jpg",
+      "sha256": "fadd67b5bbc8e89971295501b8c9c8d1f22c60639aba099f5a7816873c7d39b4",
+      "provider_or_supplier": "Google",
+      "method": "Google AI Studio / paid Nano Banana Pro",
+      "source_evidence": "Project owner statement, 2026-10-06",
+      "review_status": "source_and_owner_license_confirmed",
+      "reuse_license": "MIT"
+    },
+    {
+      "path": "assets/backgrounds/bg5.jpg",
+      "sha256": "cbea300ef252d12fdf377c1ad9ec651905dfeb827202164bb535504e8b5580cf",
+      "provider_or_supplier": "Google",
+      "method": "Google AI Studio / paid Nano Banana Pro",
+      "source_evidence": "Project owner statement, 2026-10-06",
+      "review_status": "source_and_owner_license_confirmed",
+      "reuse_license": "MIT"
+    },
+    {
+      "path": "docs/images/processing-placeholder.png",
+      "sha256": "e7460e5fa459c6012c8d731ad8de60304d920e2ea9b3b165934e334cc7b0aab7",
+      "provider_or_supplier": "KaraMorph project owner",
+      "method": "Actual application screenshot",
+      "source_evidence": "Project owner supplied replacement capture, visually reviewed 2026-10-07",
+      "review_status": "cover_free_capture_reviewed"
+    },
+    {
+      "path": "docs/images/singing-placeholder.png",
+      "sha256": "583ed11bf4d48b7db27097c17238a231a9cda6d273509a322b68f5e5ff399527",
+      "provider_or_supplier": "KaraMorph project owner",
+      "method": "Actual application screenshot",
+      "source_evidence": "Project owner supplied replacement capture, visually reviewed 2026-10-07",
+      "review_status": "amazing_grace_original_english_lyrics_reviewed"
+    }
+  ],
+  "reuse_licenses": {
+    "icons": "rights reserved; supplied for KaraMorph project distribution",
+    "named_backgrounds": "MIT, to the extent of rights held by project owner",
+    "screenshots": "documentation captures; embedded content not relicensed"
+  },
+  "screenshot_review": {
+    "processing": "Updated actual screenshot visually reviewed: no album-cover thumbnail",
+    "singing": "Amazing Grace capture reviewed; visible lines correspond to John Newton original English lyrics",
+    "recording_distributed": false
+  },
+  "maintainer_website": "https://www.opticalpivot.net/",
+  "screenshot_demo": {
+    "song": "Amazing Grace",
+    "recording_source": "https://commons.wikimedia.org/wiki/File:Amazing_Grace_US_Marine_Band.ogg",
+    "recording_status": "Commons: U.S. federal-government public-domain work",
+    "lyrics": "John Newton original English text; Commons marks public domain (died 1807)",
+    "screenshot_replacement_pending": false,
+    "recording_distributed": false
+  }
+}

@@ -1,0 +1,13 @@
+cffi==2.1.1
+numpy==2.2.6
+pycparser==3.0
+pyside6==6.11.2
+pyside6-addons==6.11.2
+pyside6-essentials==6.11.2
+shiboken6==6.11.2
+soundfile==0.14.0
+sounddevice==0.5.3
+scipy==1.15.3
+tomli==2.4.1
+typing-extensions==4.16.0
+tinytag==2.2.1

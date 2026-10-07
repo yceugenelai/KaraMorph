@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="KaraMorph balanced favicon icon v2">
+  <title>KaraMorph balanced favicon icon v2</title>
+  <defs>
+    <style>
+      .amber{stroke:#F7A614;}
+      .green{stroke:#10CF75;}
+      .blue{fill:#156CF3; stroke:#156CF3;}
+      .orbit{fill:none; stroke-width:6.5; stroke-linecap:round;}
+      .micline{fill:none; stroke:#156CF3; stroke-width:4.5; stroke-linecap:round; stroke-linejoin:round;}
+    </style>
+  </defs>
+
+  <g transform="rotate(45 32 32)">
+    <path class="orbit amber" d="M 14 32 A 18 28 0 1 1 50 32"/>
+    <path class="orbit green" d="M 50 32 A 18 28 0 1 1 14 32"/>
+  </g>
+
+  <rect class="blue" x="25.5" y="16.5" width="13" height="19" rx="6.5"/>
+  <path class="micline" d="M 22.5 30.5 V 33.5 C 22.5 38.5 26.8 42.5 32 42.5 C 37.2 42.5 41.5 38.5 41.5 33.5 V 30.5"/>
+  <rect class="blue" x="30" y="42.5" width="4" height="7" rx="2"/>
+  <rect class="blue" x="24" y="49" width="16" height="5.5" rx="2.75"/>
+</svg>
