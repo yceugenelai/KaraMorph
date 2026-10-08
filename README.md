@@ -25,6 +25,21 @@ The default shared backgrounds folder is `outputs/shared_images/` (under your se
 
 A Windows karaoke app with vocal separation, key/speed changes, AI style variations, playlists, lyrics, backgrounds and microphone recording. Traditional Chinese, English and Japanese UI are supported.
 
+## Quick start
+
+This example turns one MP3 into a jazz backing track, then adds it to your singing playlist. No coding or Python installation is needed.
+
+1. **Download**: Open [Releases](https://github.com/yceugenelai/KaraMorph/releases), expand **Assets** under the version you want, and download `KaraMorph-bootstrap-poc.zip`. This is the application package.
+2. **Extract and launch**: In File Explorer, right-click the ZIP → **Extract All**, for example into a KaraMorph folder on your desktop. Open the extracted folder, find `KaraMorph.exe` and double-click it. Extract the ZIP before running the app.
+3. **Complete first-run setup**: Choose your UI language, keep vocal separation and ACE-Step selected, and start preparation as shown on screen. Stay connected to the internet and wait for it to finish. Allow roughly 35–40 GiB including download caches.
+4. **Choose an input folder**: Create a folder named `input` beside `KaraMorph.exe`. In the app's **Settings**, click **Browse…** beside **Music folder**, select that `input` folder, then click **Save settings**. Leave the output folder at its default.
+5. **Add one song**: Use File Explorer to copy an MP3 you are authorized to use into `input`, for example `My Song.mp3`. Open **Songs** and click **Reload songs** to see it in the list.
+6. **Separate vocals**: Check the box beside the song, click **Separate vocals** and wait for completion. Expand the arrow beside the song name to find **Backing only**.
+7. **Find lyrics**: Keep the song checked and click **Fetch lyrics**. If none are found, click the song's **Assets** to search manually or add your own lyrics. Playback also works without lyrics.
+8. **Change the style**: Click **Create version** beside the song. Choose **Lounge Jazz** under **Style**, leave speed at 1.0× and key at 0, then click **Create style versions** and wait. AI processing can take a while.
+9. **Add to your singing playlist**: Expand the song, find a completed jazz version and click its **Add to playlist** button. You can also add **Backing only** to sing with the original backing style.
+10. **Start singing**: Open **Sing**, select the song in your playlist and click **Play**. The backing track and lyrics window will open so you can sing along. Click **Save playlist** to keep your list.
+
 ## Build the lightweight ZIP
 
 On Windows 11 x64, open PowerShell in this source folder. Use a Python environment with PySide6 installed (see [Python setup and source execution](docs/DEVELOPMENT.md)):
