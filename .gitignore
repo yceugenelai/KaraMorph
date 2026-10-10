@@ -40,3 +40,8 @@ backup/
 *.wav
 *.m4a
 *.mp4
+
+discussion.md
+input/
+dependabot-alerts.json
+backup/

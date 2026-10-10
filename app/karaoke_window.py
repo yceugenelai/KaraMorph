@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget, QWidgetAction
 from PySide6.QtMultimedia import QMediaPlayer
 from app.ui_icons import icon
+from app.application_identity import application_icon
 
 
 def motion_rect(width, height, image_width, image_height, elapsed_ms, scene=0):
@@ -134,6 +135,7 @@ class KaraokeWindow(QWidget):
         super().__init__(None, Qt.WindowType.Window)
         self.controller = controller
         self.setWindowTitle(t('KaraMorph · 唱歌畫面'))
+        self.setWindowIcon(application_icon())
         self.resize(1100, 680)
         self.setStyleSheet("QWidget { color: white; background: #13263b; font-size: 15px; } "
                            "QPushButton { background: #294862; border: 1px solid #50718b; border-radius: 6px; padding: 8px; } "
@@ -322,11 +324,12 @@ class KaraokeWindow(QWidget):
         self.monitor_checkbox = self._icon_button("monitor", t('麥克風監聽開關'), checkable=True)
         self.monitor_checkbox.setToolTip(t('監聽：聽到自己的麥克風聲音'))
         self.monitor_checkbox.setAccessibleName(t('麥克風監聽開關'))
+        self.monitor_checkbox.setChecked(self.controller.audio_preferences['monitor_enabled'])
         self.monitor_checkbox.toggled.connect(self._monitor_changed)
         mic_layout.addWidget(self.monitor_checkbox)
-        self.monitor_volume = self._short_slider(25, t('監聽音量'))
+        self.monitor_volume = self._short_slider(self.controller.audio_preferences['monitor_volume'], t('監聽音量'))
         self.monitor_volume.setFixedWidth(80)
-        self.monitor_volume.valueChanged.connect(lambda value: self.controller.microphone.set_monitor_volume(value / 100))
+        self.monitor_volume.valueChanged.connect(self.controller._set_monitor_volume)
         mic_layout.addWidget(self.monitor_volume)
         self.mic_level = QProgressBar()
         self.mic_level.setFixedWidth(45)
@@ -355,11 +358,25 @@ class KaraokeWindow(QWidget):
         self._update_controls_state()
 
     def _guide_changed(self, checked):
+        self.controller.remember_audio_preference('guide_enabled', checked)
         self.guide_volume.setEnabled(checked and self.guide_checkbox.isEnabled())
         self.guide_checkbox.setIcon(icon("guide_on" if checked else "guide"))
         self.guide_checkbox.setToolTip(t('導唱：開') if checked else t('導唱：關'))
         self.guide_checkbox.setAccessibleName(self.guide_checkbox.toolTip())
         self.controller.set_guide_vocal(checked)
+
+    def set_guide_available(self, available):
+        self.guide_checkbox.setEnabled(available)
+        previous = self.guide_checkbox.blockSignals(True)
+        self.guide_checkbox.setChecked(available and self.controller.audio_preferences['guide_enabled'])
+        self.guide_checkbox.blockSignals(previous)
+        self.guide_checkbox.setIcon(icon('guide_on' if self.guide_checkbox.isChecked() else 'guide'))
+        self._update_controls_state()
+
+    def set_monitor_checked(self, enabled):
+        previous = self.monitor_checkbox.blockSignals(True)
+        self.monitor_checkbox.setChecked(enabled)
+        self.monitor_checkbox.blockSignals(previous)
 
     def _record_help(self):
         from PySide6.QtWidgets import QMessageBox
@@ -567,13 +584,14 @@ class KaraokeWindow(QWidget):
         self.controller._set_guide_volume(value)
 
     def closeEvent(self, event):
-        self.guide_checkbox.setChecked(False)
+        self.set_guide_available(False)
         self.controller.stop_playback()
-        self.monitor_checkbox.setChecked(False)
+        self.set_monitor_checked(False)
         self.more_menu.close()
         super().closeEvent(event)
 
     def _monitor_changed(self, enabled):
+        self.controller.remember_audio_preference('monitor_enabled', enabled)
         try:
             self.controller.microphone.set_monitor(enabled, self.controller.audio_device.currentData())
         except Exception as error:

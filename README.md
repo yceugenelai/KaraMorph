@@ -25,6 +25,12 @@ The default shared backgrounds folder is `outputs/shared_images/` (under your se
 
 A Windows karaoke app with vocal separation, key/speed changes, AI style variations, playlists, lyrics, backgrounds and microphone recording. Traditional Chinese, English and Japanese UI are supported.
 
+## Tested environment
+
+- Windows 11
+- NVIDIA GeForce RTX 3050 Ti Laptop GPU (4 GB VRAM)
+- 40 GB RAM
+
 ## Quick start
 
 This example turns one MP3 into a jazz backing track, then adds it to your singing playlist. No coding or Python installation is needed.
@@ -69,6 +75,19 @@ Settings, playlists, logs and caches live in `.app_data/`; models in `models/`; 
 Use only material you are authorized to process. Personal use does not automatically grant permission. Publishing modified music can require reproduction, adaptation, public-performance/public-transmission and recording-related permissions, depending on applicable law. Lyrics and artwork also have rights. LRCLIB availability does not itself grant redistribution permission.
 
 For Python environment setup and running from source, see [the developer guide](docs/DEVELOPMENT.md).
+
+## Moving user data
+
+You can change the application folder, but **copying music and outputs to different paths does not reliably preserve links to existing versions, recordings and playlists**. Song IDs include the original audio's full path, size and modification time; generated audio also uses absolute paths. Some settings are adjusted when the application moves, but this is not a complete data migration.
+
+For a freshly extracted version on the same PC, keep the existing data locations:
+
+1. Close both versions and back up your data. Keep the original music folder and the entire output folder (default: `outputs/`), including separated audio, style versions, recordings, lyrics, song images and shared images.
+2. Copy the old `.app_data/settings.json` and `last_playlist.json` into the new application's `.app_data/`, if present. Copy `logs/` if you want diagnostic history, and keep any separately saved playlist JSON files. Models, Python environments, caches and `model-receipts.json` are not needed for this transfer.
+3. Open the new app. In Settings, select the **original full paths** for the music and output folders, save settings, then click Reload songs. For example, the app can be in `D:\KaraMorph-new` while data stays in `D:\KaraMorph-old\input` and `D:\KaraMorph-old\outputs`.
+4. Check originals, generated versions, recordings and playlists before removing old application files. Keep the data folders still in use.
+
+On another PC, use the same drive letters and full data paths, and preserve original audio filenames, contents and modification times. Then follow the settings steps above. There is currently no automatic migration tool for changing data paths; selecting new folders alone does not repair every link. Keep your backup.
 
 ## License
 

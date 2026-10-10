@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog
 
 from app.karaoke_assets import read_lyrics, save_lyrics, shared_images_dir, song_images_dir
 from app.lyrics import assets_dir, load_lyric_state, parse_lrc, save_lyric_state
+from app.image_assets_widget import ImageAssetsWidget
 
 
 class LyricsDialog(QDialog):
@@ -36,18 +37,24 @@ class LyricsDialog(QDialog):
         self.retry.setSingleShot(True)
         self.retry.timeout.connect(self._send)
         layout = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs, 1)
+        self.lyrics_page = QWidget()
+        lyrics_layout = QVBoxLayout(self.lyrics_page)
+        lyrics_layout.setContentsMargins(0, 0, 0, 0)
+        self.tabs.addTab(self.lyrics_page, t('歌詞'))
         self.source = QComboBox()
         for title, key in [(t('人工純文字'), 'manual'), (t('LRCLIB 同步'), 'lrclib'),
                            (t('下載純文字'), 'downloaded'), (t('本機 LRC'), 'local')]:
             self.source.addItem(title, key)
-        layout.addWidget(QLabel(t('播放歌詞來源（同一首歌的各版本共用；下載不覆蓋人工內容）')))
-        layout.addWidget(self.source)
-        self.tabs = QTabWidget()
-        layout.addWidget(self.tabs, 1)
+        lyrics_layout.addWidget(QLabel(t('播放歌詞來源（同一首歌的各版本共用；下載不覆蓋人工內容）')))
+        lyrics_layout.addWidget(self.source)
+        self.lyric_tabs = QTabWidget()
+        lyrics_layout.addWidget(self.lyric_tabs, 1)
         self.manual = QPlainTextEdit()
         self.local = QPlainTextEdit()
         self.local.setPlaceholderText(t('貼上原曲時間軸的 LRC，或按「匯入 .lrc」'))
-        self.tabs.addTab(self.manual, t('人工歌詞'))
+        self.lyric_tabs.addTab(self.manual, t('人工歌詞'))
         local_page = QWidget()
         local_layout = QVBoxLayout(local_page)
         local_layout.addWidget(QLabel(t('LRC 以原曲時間軸解讀；已變速的 LRC 請先換算回原曲時間。')))
@@ -55,7 +62,7 @@ class LyricsDialog(QDialog):
         import_button.clicked.connect(self.import_lrc)
         local_layout.addWidget(import_button)
         local_layout.addWidget(self.local, 1)
-        self.tabs.addTab(local_page, t('本機 LRC'))
+        self.lyric_tabs.addTab(local_page, t('本機 LRC'))
         search_page = QWidget()
         search_layout = QVBoxLayout(search_page)
         form = QFormLayout()
@@ -95,15 +102,37 @@ class LyricsDialog(QDialog):
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self.apply_candidate)
         search_layout.addWidget(self.apply_button)
-        self.tabs.addTab(search_page, 'LRCLIB')
-        folders = QHBoxLayout()
-        for title, path in [(t('歌曲圖片資料夾'), song_images_dir(self.workspace, song_id)),
-                            (t('共用圖片資料夾'), shared_images_dir(self.workspace))]:
+        self.lyric_tabs.addTab(search_page, 'LRCLIB')
+        self.images = ImageAssetsWidget(self.workspace, song_id, song,
+                                        getattr(controller, 'image_search_registry', None), self,
+                                        settings=controller.settings,
+                                        persist=getattr(controller, 'persist_image_search_preferences', None))
+        self.images.saveRequested.connect(self.save)
+        self.shared_images = ImageAssetsWidget(self.workspace, song_id, song,
+                                        getattr(controller, 'image_search_registry', None), self.images,
+                                        settings=controller.settings,
+                                        persist=getattr(controller, 'persist_image_search_preferences', None),
+                                        shared=True)
+        self.shared_images.saveRequested.connect(self.save)
+        self.images.returnRequested.connect(lambda: self.tabs.setCurrentWidget(self.images))
+        self.shared_images.returnRequested.connect(lambda: self.tabs.setCurrentWidget(self.images))
+        # Keep each editor's import/download session separate while presenting
+        # one flat set of image tabs to the user.
+        for _ in range(2):
+            page = self.shared_images.tabs.widget(0)
+            title = self.shared_images.tabs.tabText(0)
+            self.shared_images.tabs.removeTab(0)
+            self.images.tabs.addTab(page, title)
+        self.shared_images.navigation_tabs = self.images.tabs
+        self.shared_images.local_tab_index = 2
+        self.shared_images.hide()
+        self.tabs.addTab(self.images, t('圖片'))
+        for index, title, path in [(0, t('歌曲圖片資料夾'), song_images_dir(self.workspace, song_id)),
+                                  (2, t('共用圖片資料夾'), shared_images_dir(self.workspace))]:
             button = QPushButton(title)
             button.clicked.connect(lambda _, target=path: controller._open_asset_folder(target))
-            folders.addWidget(button)
-        layout.addLayout(folders)
-        layout.addWidget(QLabel(t('圖片支援 JPG、PNG、WebP、BMP；歌曲圖片優先。')))
+            self.images.tabs.widget(index).layout().addWidget(button)
+        self.images.tabs.currentChanged.connect(self._image_scope_changed)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
@@ -117,6 +146,13 @@ class LyricsDialog(QDialog):
         if cached:
             self.status.setText(t('已保存：{p0} · {p1}（ID {p2}）', p0=cached.get('trackName', ''), p1=cached.get('artistName', ''), p2=cached.get('id', '')))
         self.finished.connect(self.cancel_search)
+        self.finished.connect(self.images.dispose)
+        self.finished.connect(self.shared_images.dispose)
+
+    def _image_scope_changed(self, index):
+        inactive = self.images if index >= 2 else self.shared_images
+        if inactive.receiver:
+            inactive.receiver.close()
 
     def import_lrc(self):
         filename, _ = QFileDialog.getOpenFileName(self, t('匯入原曲時間軸 LRC'), '', 'LRC (*.lrc)')
@@ -260,6 +296,12 @@ class LyricsDialog(QDialog):
         self.status.setText(t('已選取；按下方儲存後保存到本機。'))
 
     def save(self):
+        for editor in (self.images, self.shared_images):
+            if editor.download_reply:
+                self.tabs.setCurrentWidget(self.images)
+                self.images.tabs.setCurrentIndex(editor.local_tab_index)
+                editor.receive_status(t('請等待圖片下載完成，或先取消下載。'))
+                return
         source = self.source.currentData()
         folder = assets_dir(self.workspace, self.song_id)
         try:
@@ -281,7 +323,10 @@ class LyricsDialog(QDialog):
                 self.state['query'] = self.chosen_query
             self.state['source'] = source
             save_lyric_state(self.workspace, self.song_id, self.state)
+            self.images.save()
+            self.shared_images.save()
         except (OSError, UnicodeError, ValueError) as error:
-            QMessageBox.warning(self, t('儲存歌詞失敗'), str(error))
+            QMessageBox.warning(self, t('儲存素材失敗'), str(error))
             return
-        self.accept()
+        self.images.receive_status(t('素材已儲存。'))
+        self.shared_images.receive_status(t('素材已儲存。'))
