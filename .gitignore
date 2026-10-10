@@ -40,3 +40,6 @@ backup/
 *.wav
 *.m4a
 *.mp4
+
+discussion.md
+input/

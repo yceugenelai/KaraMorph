@@ -51,6 +51,17 @@ class Reply(QObject):
 
 
 class ConsumerUiTests(unittest.TestCase):
+    def test_closing_assets_refreshes_immediate_imports_even_on_cancel(self):
+        dialog = Mock()
+        dialog.exec.return_value = 0
+        with patch('app.lyrics_dialog.LyricsDialog', return_value=dialog), \
+                patch.object(self.window, 'refresh_tree') as tree, \
+                patch.object(self.window, 'refresh_queue_labels') as queue:
+            self.window.edit_song_assets('song')
+        tree.assert_called_once()
+        queue.assert_called_once()
+        dialog.deleteLater.assert_called_once()
+
     @classmethod
     def setUpClass(cls):
         existing = QApplication.instance()
@@ -387,6 +398,77 @@ class ConsumerUiTests(unittest.TestCase):
         self.addCleanup(view.deleteLater)
         return view
 
+    def test_audio_preferences_survive_close_restart_and_unavailable_guide(self):
+        view = self.karaoke_fixture()
+        self.assertTrue(view.monitor_checkbox.isChecked())
+        self.assertFalse(view.guide_checkbox.isChecked())
+        view.set_guide_available(True)
+        view.guide_checkbox.click()
+        view.music_volume.setValue(63)
+        view.guide_volume.setValue(21)
+        view.monitor_volume.setValue(37)
+        view.monitor_checkbox.click()
+        view.set_guide_available(False)
+        self.assertTrue(self.window.audio_preferences['guide_enabled'])
+        view.set_guide_available(True)
+        self.assertTrue(view.guide_checkbox.isChecked())
+        view.close()
+        self.window.close()
+        expected = dict(guide_enabled=True, monitor_enabled=False,
+                        music_volume=63, guide_volume=21, monitor_volume=37)
+        self.assertEqual(self.settings['singing_preferences'], expected)
+        other = ConsumerWindow()
+        try:
+            self.assertEqual(other.audio_preferences, expected)
+            self.assertEqual(other.sing_volume.value(), 63)
+            self.assertAlmostEqual(other.guide_audio.volume(), .21, places=5)
+            self.assertAlmostEqual(other.microphone.monitor_volume, .37)
+            self.assertIsNone(other.microphone.source)
+        finally:
+            other.close()
+            other.deleteLater()
+
+    def test_monitor_failure_does_not_overwrite_desired_preference(self):
+        view = self.karaoke_fixture()
+        self.window.microphone.set_monitor.side_effect = [RuntimeError('unsupported'), None]
+        with patch('PySide6.QtWidgets.QMessageBox.warning'):
+            view._monitor_changed(True)
+        self.assertFalse(view.monitor_checkbox.isChecked())
+        self.assertTrue(self.window.audio_preferences['monitor_enabled'])
+        view.close()
+
+    def test_volume_changes_are_saved_automatically_without_closing(self):
+        with patch('app.consumer.save_settings') as save:
+            self.window._set_singing_volume(50)
+            self.window._set_singing_volume(61)
+            self.window._set_guide_volume(20)
+            save.assert_not_called()
+            QTest.qWait(350)
+            save.assert_called_once()
+            prefs = save.call_args.args[0]['singing_preferences']
+            self.assertEqual(prefs['music_volume'], 61)
+            self.assertEqual(prefs['guide_volume'], 20)
+
+    def test_custom_thumbnail_reappears_after_library_reload(self):
+        from PySide6.QtGui import QImage, QColor
+        from app.song_images import save_thumbnail, selected_thumbnail
+        self.populate(1)
+        path = self.root / 'picture.png'
+        image = QImage(100, 60, QImage.Format.Format_RGB32)
+        image.fill(QColor('red'))
+        image.save(str(path))
+        save_thumbnail(self.window.workspace, 's0', path)
+        self.window.add_to_queue('s0', 'original')
+        self.window.refresh_tree()
+        expected = QColor('red').rgb()
+        self.assertEqual(self.window.tree.topLevelItem(0).icon(0).pixmap(48).toImage().pixel(20, 10), expected)
+        self.assertEqual(self.window.queue.item(0).icon().pixmap(48).toImage().pixel(20, 10), expected)
+        self.window.song_map['s0']['cover_path'] = None
+        self.window.refresh_tree()
+        self.window.refresh_queue_labels()
+        self.assertIsNotNone(selected_thumbnail(self.window.workspace, 's0'))
+        self.assertEqual(self.window.song_thumbnail(self.window.song_map['s0']), selected_thumbnail(self.window.workspace, 's0'))
+
     def test_plain_lyrics_preview_and_vocal_pauses(self):
         import numpy as np
         view = self.karaoke_fixture()
@@ -535,6 +617,7 @@ class ConsumerUiTests(unittest.TestCase):
         self.window.source_field.setText(str(source))
         self.window.output_field.setText(str(self.root / 'outputs'))
         self.window.background_mode.setCurrentIndex(self.window.background_mode.findData('song_first'))
+        self.window.image_receiver_percent.setValue(27)
         self.window.singing_audio_mode.setCurrentIndex(self.window.singing_audio_mode.findData('exclusive'))
         with patch('app.consumer.save_settings') as save, patch('app.consumer.test_exclusive_device') as probe, \
                 patch.object(self.window, 'scan_library'), patch('app.consumer.QMessageBox.warning') as warning, \
@@ -542,6 +625,7 @@ class ConsumerUiTests(unittest.TestCase):
             self.window.save_settings()
             save.assert_called_once()
             self.assertEqual(save.call_args.args[0]['background_mode'], 'song_first')
+            self.assertEqual(save.call_args.args[0]['image_receiver_percent'], 27)
             self.assertEqual(save.call_args.args[0]['singing_audio_mode'], 'exclusive')
             self.assertEqual(self.window.info.text(), '設定已儲存')
             probe.assert_not_called()

@@ -70,6 +70,50 @@ class LyricsUiTests(unittest.TestCase):
         reply.finished.connect(self.dialog._received)
         reply.finished.emit()
 
+    def test_lyrics_and_images_are_separate_and_preserve_edits(self):
+        self.assertEqual(self.dialog.tabs.count(), 2)
+        self.assertEqual(self.dialog.lyric_tabs.count(), 3)
+        self.assertEqual(self.dialog.images.tabs.count(), 4)
+        self.dialog.manual.setPlainText('unsaved lyric')
+        self.dialog.tabs.setCurrentWidget(self.dialog.images)
+        self.assertEqual(self.dialog.tabs.currentWidget(), self.dialog.images)
+        self.dialog.tabs.setCurrentWidget(self.dialog.lyrics_page)
+        self.assertEqual(self.dialog.manual.toPlainText(), 'unsaved lyric')
+
+    def test_shared_paste_routes_to_shared_gallery_and_save(self):
+        from PySide6.QtCore import QMimeData
+        from PySide6.QtGui import QImage, QColor
+        from app.karaoke_assets import image_files, shared_images_dir, song_images_dir
+        self.dialog.tabs.setCurrentWidget(self.dialog.images)
+        self.dialog.images.tabs.setCurrentIndex(3)
+        image = QImage(20, 20, QImage.Format.Format_RGB32)
+        image.fill(QColor('blue'))
+        mime = QMimeData()
+        mime.setImageData(image)
+        self.dialog.shared_images.receive_mime(mime)
+        self.assertEqual(self.dialog.images.tabs.currentIndex(), 2)
+        self.assertEqual(len(self.dialog.shared_images.imports), 1)
+        self.assertEqual(self.dialog.images.imports, [])
+        self.dialog.save()
+        self.assertTrue(any(path.name.startswith('pasted-') for path in image_files(shared_images_dir(self.controller.workspace))))
+        self.assertFalse(song_images_dir(self.controller.workspace, 'song').exists())
+
+    def test_save_keeps_assets_open_and_returns_to_correct_image_scope(self):
+        self.dialog.show()
+        self.dialog.manual.setPlainText('saved without closing')
+        self.dialog.save()
+        self.assertTrue(self.dialog.isVisible())
+        self.assertEqual((assets_dir(self.controller.workspace, 'song') / 'lyrics.txt').read_text(encoding='utf-8'),
+                         'saved without closing')
+        for editor, expected_index in ((self.dialog.images, 0), (self.dialog.shared_images, 2)):
+            self.dialog.tabs.setCurrentWidget(self.dialog.lyrics_page)
+            editor.show_receiver()
+            editor.return_to_save()
+            self.assertTrue(self.dialog.isVisible())
+            self.assertEqual(self.dialog.tabs.currentWidget(), self.dialog.images)
+            self.assertEqual(self.dialog.images.tabs.currentIndex(), expected_index)
+            self.assertFalse(editor.receiver.isVisible())
+
     def test_request_preview_apply_and_offline_reopen_preserve_manual(self):
         reply = Reply()
         with patch.object(self.dialog.network, 'get', return_value=reply) as get:
@@ -124,8 +168,10 @@ class LyricsUiTests(unittest.TestCase):
     def test_canvas_tempo_seek_delay_and_only_repaint_on_line_change(self):
         c = self.controller
         for name in ['previous_song', 'toggle_pause', 'stop_playback', 'next_song', 'set_guide_vocal',
-                     '_set_singing_volume', '_set_guide_volume']:
+                     '_set_singing_volume', '_set_guide_volume', '_set_monitor_volume', 'remember_audio_preference']:
             setattr(c, name, Mock())
+        from app.audio_preferences import load_preferences
+        c.audio_preferences = load_preferences(c.settings)
         c.audio, c.guide_audio = Mock(), Mock()
         c.audio.volume.return_value = .6
         c.guide_audio.volume.return_value = .12

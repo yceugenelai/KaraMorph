@@ -40,6 +40,10 @@ from app.style_presets import PRESETS
 from app.style_execution import confirm_execution
 from app.batch_lyrics import LyricsLookup, has_lrclib
 from app.ui_icons import icon
+from app.application_identity import application_icon, configure_process_identity
+from app.audio_preferences import load_preferences
+from app.song_images import selected_thumbnail
+from app.image_search import ImageSearchRegistry
 
 from runtime_config import ROOT
 LEVELS = {
@@ -128,9 +132,14 @@ class ConsumerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("KaraMorph")
-        self.setWindowIcon(QIcon(str(ROOT / "assets" / "icon.svg")))
+        self.setWindowIcon(application_icon())
         self.resize(1160, 760)
         self.settings = load_settings()
+        self.audio_preferences = load_preferences(self.settings)
+        self.image_search_registry = ImageSearchRegistry()
+        self.preferences_timer = QTimer(self)
+        self.preferences_timer.setSingleShot(True)
+        self.preferences_timer.timeout.connect(self.flush_audio_preferences)
         configure(self.settings.get('ui_language', 'zh_TW'))
         self.workspace = Path(self.settings["workspace"]).expanduser().resolve()
         self.songs = []
@@ -160,19 +169,21 @@ class ConsumerWindow(QMainWindow):
         self.preview_vocal_choices = {}
         self.stem_preview = StemPreview()
         self.microphone = MicrophoneService(self)
+        self.microphone.monitor_enabled = self.audio_preferences['monitor_enabled']
+        self.microphone.set_monitor_volume(self.audio_preferences['monitor_volume'] / 100)
         self.microphone.recordingFinished.connect(lambda _: self.refresh_tree())
         self.microphone.failed.connect(lambda message: QMessageBox.warning(self, t('麥克風錯誤'), message))
         self.job_state = {}
         self.failures = {}
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
-        self.audio.setVolume(0.8)
+        self.audio.setVolume(self.audio_preferences['music_volume'] / 100)
         self.player.setAudioOutput(self.audio)
         self.player.mediaStatusChanged.connect(self._media_status)
         self.player.errorOccurred.connect(self._media_error)
         self.guide_player = QMediaPlayer(self)
         self.guide_audio = QAudioOutput(self)
-        self.guide_audio.setVolume(self.audio.volume() * 0.15)
+        self.guide_audio.setVolume(self.audio_preferences['guide_volume'] / 100)
         self.guide_player.setAudioOutput(self.guide_audio)
         self.guide_vocal_path = None
         self.guide_player.mediaStatusChanged.connect(self._guide_media_status)
@@ -328,7 +339,7 @@ class ConsumerWindow(QMainWindow):
         volume_row.addWidget(QLabel(t('音量')))
         volume = QSlider(Qt.Orientation.Horizontal)
         volume.setRange(0, 100)
-        volume.setValue(80)
+        volume.setValue(self.audio_preferences['music_volume'])
         volume.valueChanged.connect(self._set_singing_volume)
         self.sing_volume = volume
         volume_row.addWidget(volume)
@@ -340,6 +351,7 @@ class ConsumerWindow(QMainWindow):
         layout.addLayout(files)
 
     def _set_singing_volume(self, value):
+        self.remember_audio_preference('music_volume', value)
         self.audio.setVolume(value / 100)
         if self.sing_volume.value() != value:
             self.sing_volume.setValue(value)
@@ -347,7 +359,28 @@ class ConsumerWindow(QMainWindow):
             self.karaoke_window.music_volume.setValue(value)
 
     def _set_guide_volume(self, value):
+        self.remember_audio_preference('guide_volume', value)
         self.guide_audio.setVolume(value / 100)
+
+    def _set_monitor_volume(self, value):
+        self.remember_audio_preference('monitor_volume', value)
+        self.microphone.set_monitor_volume(value / 100)
+
+    def remember_audio_preference(self, key, value):
+        if self.audio_preferences[key] != value:
+            self.audio_preferences[key] = value
+            self.preferences_timer.start(250)
+
+    def flush_audio_preferences(self):
+        self.preferences_timer.stop()
+        self.settings['singing_preferences'] = dict(self.audio_preferences)
+        try:
+            save_settings(self.settings)
+        except OSError as error:
+            QMessageBox.warning(self, t('無法保存音訊偏好'), str(error))
+
+    def song_thumbnail(self, song):
+        return selected_thumbnail(self.workspace, song['id']) or song.get('cover_path')
 
     def _build_process_page(self):
         layout = QVBoxLayout(self.process_page)
@@ -549,6 +582,15 @@ class ConsumerWindow(QMainWindow):
         self.background_motion.setChecked(bool(self.settings.get('background_motion', True)))
         self.background_motion.setToolTip(t('輕微縮放與移動，保留完整圖片；若音訊不穩可關閉比較。'))
         form.addRow(self.background_motion)
+        self.image_receiver_percent = QSpinBox()
+        self.image_receiver_percent.setRange(10, 30)
+        self.image_receiver_percent.setSuffix('%')
+        try:
+            percent = int(self.settings.get('image_receiver_percent', 20))
+        except (TypeError, ValueError, OverflowError):
+            percent = 20
+        self.image_receiver_percent.setValue(percent)
+        form.addRow(t('圖片接收列高度'), self.image_receiver_percent)
         self.advanced_fields = {}
         self.runtime_path_status = QLabel(t('執行元件與模型由模型管理頁檢查。'))
         self.runtime_path_status.setWordWrap(True)
@@ -769,6 +811,7 @@ class ConsumerWindow(QMainWindow):
         self.settings["singing_audio_mode"] = self.singing_audio_mode.currentData()
         self.settings["background_mode"] = self.background_mode.currentData()
         self.settings['background_motion'] = self.background_motion.isChecked()
+        self.settings['image_receiver_percent'] = self.image_receiver_percent.value()
         self.settings['ui_language'] = self.ui_language.currentData()
         self._apply_output_device()
         save_settings(self.settings)
@@ -783,6 +826,12 @@ class ConsumerWindow(QMainWindow):
         message = (t('設定已儲存；介面語言將在重新啟動後生效。')
                    if self.settings['ui_language'] != language() else t('設定已儲存'))
         QMessageBox.information(self, t('設定'), message)
+
+    def persist_image_search_preferences(self):
+        try:
+            save_settings(self.settings)
+        except OSError as error:
+            QMessageBox.warning(self, t('無法保存圖片搜尋設定'), str(error))
 
     def scan_library(self):
         if getattr(self, "scan_task", None) is not None:
@@ -840,7 +889,7 @@ class ConsumerWindow(QMainWindow):
             lyrics_label, lyrics_hint = lyric_status(self.workspace, song_id)
             root = QTreeWidgetItem(self.tree, [display_name, summary, lyrics_label, "", "", ""])
             root.setToolTip(2, lyrics_hint)
-            root.setIcon(0, cover_icon(song.get("cover_path")))
+            root.setIcon(0, cover_icon(self.song_thumbnail(song)))
             root.setToolTip(0, " · ".join(x for x in (song.get("artist"), song.get("album"), song["path"]) if x))
             root.setData(0, Qt.ItemDataRole.UserRole, song_id)
             root.setFlags(root.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -947,6 +996,7 @@ class ConsumerWindow(QMainWindow):
         available = path.is_file() and (variant_id != "original" or song.get("available", True))
         item = QTreeWidgetItem(parent, [label, t('✓ 可播放') if available else t('⚠ 檔案遺失'), parent.text(2), "", "", ""])
         item.setToolTip(2, parent.toolTip(2))
+        item.setIcon(0, cover_icon(self.song_thumbnail(song)))
         item.setData(0, Qt.ItemDataRole.UserRole, (song["id"], variant_id))
         item.setToolTip(0, label)
         if available:
@@ -1027,14 +1077,15 @@ class ConsumerWindow(QMainWindow):
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, t('讀取歌曲素材失敗'), str(error))
             return
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        dialog.exec()
         dialog.deleteLater()
-        if accepted:
-            self.refresh_tree()
-            if self.karaoke_window and self.karaoke_window.isVisible() and self.playing_item:
-                item = self.playing_item.data(Qt.ItemDataRole.UserRole)
-                if item["song_id"] == song_id:
-                    self._sync_karaoke_song(item)
+        # Image imports are immediate and survive closing/canceling the editor.
+        self.refresh_tree()
+        self.refresh_queue_labels()
+        if self.karaoke_window and self.karaoke_window.isVisible() and self.playing_item:
+            item = self.playing_item.data(Qt.ItemDataRole.UserRole)
+            if item["song_id"] == song_id:
+                self._sync_karaoke_song(item)
 
     def _open_asset_folder(self, folder):
         try:
@@ -1058,9 +1109,7 @@ class ConsumerWindow(QMainWindow):
         self.guide_player.setSource(QUrl())
         self.guide_vocal_path = None
         if self.karaoke_window:
-            self.karaoke_window.guide_checkbox.setEnabled(False)
-            self.karaoke_window.guide_volume.setEnabled(False)
-            self.karaoke_window.guide_checkbox.setChecked(False)
+            self.karaoke_window.set_guide_available(False)
         self._stop_preview()
         self.player.setSource(QUrl())
         self.preview_player.setSource(QUrl())
@@ -1201,7 +1250,7 @@ class ConsumerWindow(QMainWindow):
         row = QListWidgetItem(self.queue_display_label(item))
         song = self.song_map.get(item["song_id"])
         if song:
-            row.setIcon(cover_icon(song.get("cover_path")))
+            row.setIcon(cover_icon(self.song_thumbnail(song)))
         row.setData(Qt.ItemDataRole.UserRole, item)
         self.queue.addItem(row)
 
@@ -1215,7 +1264,7 @@ class ConsumerWindow(QMainWindow):
             missing = self.version_path(item["song_id"], item["variant_id"]) is None
             row.setText((t('⚠ 無法使用 · ') if missing else "") + self.queue_display_label(item))
             if item["song_id"] in self.song_map:
-                row.setIcon(cover_icon(self.song_map[item["song_id"]].get("cover_path")))
+                row.setIcon(cover_icon(self.song_thumbnail(self.song_map[item["song_id"]])))
 
     def play_selected(self):
         if not self.queue.count():
@@ -1233,8 +1282,14 @@ class ConsumerWindow(QMainWindow):
             self.karaoke_window = KaraokeWindow(self)
         self.karaoke_window.show()
         self.karaoke_window.raise_()
+        # Open capture first; an unsupported monitor format must not stop singing.
+        self.microphone.monitor_enabled = False
+        self.karaoke_window.set_monitor_checked(False)
         try:
             self.microphone.start(self.microphone_device.currentData(), self.audio_device.currentData())
+            enabled = self.audio_preferences['monitor_enabled']
+            self.karaoke_window.set_monitor_checked(enabled)
+            self.karaoke_window._monitor_changed(enabled)
         except Exception as error:
             QMessageBox.warning(self, t('麥克風無法使用'), str(error))
         self._play_from(start)
@@ -1281,9 +1336,7 @@ class ConsumerWindow(QMainWindow):
         self.guide_player.stop()
         self.guide_vocal_path = None
         if self.karaoke_window:
-            self.karaoke_window.guide_checkbox.setEnabled(False)
-            self.karaoke_window.guide_volume.setEnabled(False)
-            self.karaoke_window.guide_checkbox.setChecked(False)
+            self.karaoke_window.set_guide_available(False)
         self.playing_item = None
         self.microphone.stop()
         self.record_checkbox.setEnabled(True)
@@ -1383,6 +1436,7 @@ class ConsumerWindow(QMainWindow):
             event.ignore()
             return
         self._closing = True
+        self.flush_audio_preferences()
         try:
             save_playlist(data_dir() / "last_playlist.json", self.queue_items())
         except Exception as error:
@@ -1403,21 +1457,16 @@ class ConsumerWindow(QMainWindow):
         self.guide_vocal_path = path
         self.guide_player.stop()
         checkbox = self.karaoke_window.guide_checkbox
-        checkbox.setEnabled(bool(path))
-        self.karaoke_window.guide_volume.setEnabled(bool(path) and checkbox.isChecked())
-        if not path:
-            checkbox.setChecked(False)
-        self.karaoke_window._update_controls_state()
+        self.karaoke_window.set_guide_available(bool(path))
         if self.player is self.exclusive_player:
             try:
                 self.exclusive_player.set_guide(path)
                 self.exclusive_player.guide_enabled = bool(path) and checkbox.isChecked()
             except Exception as error:
-                checkbox.setChecked(False)
+                self.karaoke_window.set_guide_available(False)
                 QMessageBox.warning(self, t('導唱無法使用'), str(error))
             return
         if not path:
-            checkbox.setChecked(False)
             self.guide_player.setSource(QUrl())
         elif checkbox.isChecked():
             self.set_guide_vocal(True)
@@ -1513,9 +1562,7 @@ class ConsumerWindow(QMainWindow):
             self.guide_player.stop()
             self.guide_vocal_path = None
             if self.karaoke_window:
-                self.karaoke_window.guide_checkbox.setEnabled(False)
-                self.karaoke_window.guide_volume.setEnabled(False)
-                self.karaoke_window.guide_checkbox.setChecked(False)
+                self.karaoke_window.set_guide_available(False)
             self.playing_item = None
         self.queue.takeItem(row)
         self.now_playing.setText(t('已從歌單移除；音檔仍保留'))
@@ -1553,9 +1600,7 @@ class ConsumerWindow(QMainWindow):
             self.guide_player.stop()
             self.guide_vocal_path = None
             if self.karaoke_window:
-                self.karaoke_window.guide_checkbox.setEnabled(False)
-                self.karaoke_window.guide_volume.setEnabled(False)
-                self.karaoke_window.guide_checkbox.setChecked(False)
+                self.karaoke_window.set_guide_available(False)
             self.playing_item = None
             self.queue.clear()
             for item in items:
@@ -2200,8 +2245,9 @@ class ConsumerWindow(QMainWindow):
 
 
 def main():
+    configure_process_identity()
     app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon(str(ROOT / "assets" / "icon.svg")))
+    app.setWindowIcon(application_icon())
     window = ConsumerWindow()
     window.show()
     from app.model_store import ModelStore
