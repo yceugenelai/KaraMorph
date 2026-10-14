@@ -15,6 +15,9 @@ import soundfile as sf
 from scipy.signal import resample_poly
 from PySide6.QtCore import QEventLoop, QObject, QTimer, QUrl, Signal
 from PySide6.QtMultimedia import QMediaPlayer
+from app.playback_effects import PlaybackRenderer
+from app.soundtouch import ready
+from app.i18n import t
 
 
 def device_index(device, direction):
@@ -40,7 +43,7 @@ def read_audio(path, rate, channels):
     except sf.LibsndfileError:
         ffmpeg = shutil.which('ffmpeg')
         if not ffmpeg:
-            raise ValueError('獨占播放無法解碼此格式；請轉成 WAV／MP3，安裝 FFmpeg 或在設定切換 Qt 共用模式。')
+            raise ValueError('無法解碼此格式；請使用 WAV／MP3，或準備 FFmpeg。')
         result = subprocess.run([ffmpeg, '-v', 'error', '-i', str(path), '-f', 'f32le',
                                  '-ac', str(channels), '-ar', str(rate), 'pipe:1'],
                                 capture_output=True, check=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -108,9 +111,16 @@ class ExclusivePlayer(QObject):
     mediaStatusChanged = Signal(object)
     errorOccurred = Signal(object, str)
 
-    def __init__(self, microphone, parent=None):
+    def __init__(self, microphone, parent=None, exclusive=True):
         super().__init__(parent)
         self.mic = microphone
+        self.exclusive = exclusive
+        self.effects = (1., 0)
+        self.renderer = None
+        self.audible_segments = deque(maxlen=128)
+        self.guide_path = None
+        self.rendered_backing = np.empty((65536, 2), dtype=np.float32)
+        self.rendered_guide = np.empty((65536, 2), dtype=np.float32)
         self.stream = None
         self._source = QUrl()
         self._state = QMediaPlayer.PlaybackState.StoppedState
@@ -153,6 +163,15 @@ class ExclusivePlayer(QObject):
         return round(len(self.backing) * 1000 / self.rate) if self.backing is not None else 0
 
     def position(self):
+        if self.renderer and self.stream and self._state == QMediaPlayer.PlaybackState.PlayingState:
+            now = time.monotonic()
+            segments = list(self.audible_segments)
+            for begin, end, start, finish in reversed(segments):
+                if now >= begin:
+                    ratio = min(1., (now-begin)/max(1e-9, end-begin))
+                    return round((start + (finish-start)*ratio)*1000/self.rate)
+            if segments:
+                return round(segments[0][2]*1000/self.rate)
         return round(self.frame * 1000 / self.rate)
 
     def playbackState(self):
@@ -162,12 +181,45 @@ class ExclusivePlayer(QObject):
         self.stop()
         self._source = url
         self.backing = self.guide = None
+        self.guide_path = None
 
     def setPosition(self, value):
-        self.frame = max(0, min(len(self.backing), round(value * self.rate / 1000))) if self.backing is not None else 0
+        target = max(0, min(len(self.backing), round(value * self.rate / 1000))) if self.backing is not None else 0
+        self.frame = target
+        if self.renderer:
+            stream = self.stream
+            try:
+                if stream:
+                    stream.stop()
+                self.renderer.close()
+                self.renderer = None
+                self.renderer = PlaybackRenderer(self.backing, self.guide, self.rate,
+                                                target, self.effects)
+                self.frame = target
+                self.ended = False
+                self.audible_segments.clear()
+                if stream:
+                    stream.start()
+            except Exception:
+                self.stop()
+                raise
+
+    def set_effects(self, tempo, key):
+        if not np.isfinite(tempo) or not .7 <= tempo <= 1.3 or int(key) != key or not -6 <= key <= 6:
+            raise ValueError('Invalid playback speed or key')
+        if (tempo != 1 or key != 0) and not ready():
+            raise RuntimeError('SoundTouch is not prepared; run scripts/prepare_soundtouch.py')
+        self.effects = (float(tempo), int(key))
+        if self.renderer:
+            self.renderer.settings = self.effects
 
     def set_guide(self, path):
-        self.guide = read_audio(path, self.rate, self.channels) if path else None
+        if path == self.guide_path:
+            return
+        self.guide_path = path
+        if self.stream:
+            self.guide = read_audio(path, self.rate, self.channels) if path else None
+            self.setPosition(self.position())
 
     def play(self):
         if self.stream:
@@ -184,11 +236,13 @@ class ExclusivePlayer(QObject):
                 for dtype in ('float32', 'int16', 'int32'):
                     stream = None
                     try:
-                        settings = (sd.WasapiSettings(exclusive=True), sd.WasapiSettings(exclusive=True))
+                        settings = (sd.WasapiSettings(exclusive=self.exclusive), sd.WasapiSettings(exclusive=self.exclusive))
                         sd.check_input_settings(device=inp, channels=cin, samplerate=rate, dtype=dtype, extra_settings=settings[0])
                         sd.check_output_settings(device=out, channels=cout, samplerate=rate, dtype=dtype, extra_settings=settings[1])
                         self.backing = read_audio(self._source.toLocalFile(), rate, cout)
                         self.rate, self.channels, self.dtype = rate, cout, dtype
+                        self.guide = read_audio(self.guide_path, rate, cout) if self.guide_path else None
+                        self.renderer = PlaybackRenderer(self.backing, self.guide, rate, settings=self.effects)
                         self.frame = 0
                         self.failure = None
                         self.ended = self.capture_overflow = False
@@ -214,13 +268,17 @@ class ExclusivePlayer(QObject):
                         self._write_diagnostic('start')
                         self.timer.start()
                         self.playbackStateChanged.emit(self._state)
-                        self.mic.bufferInfoChanged.emit(f'WASAPI 獨占 · {rate} Hz · {dtype} · API 輸入／輸出 '
+                        mode = t('WASAPI 獨占') if self.exclusive else t('WASAPI 共用')
+                        self.mic.bufferInfoChanged.emit(f'{mode} · {rate} Hz · {dtype} · API 輸入／輸出 '
                             f'{stream.latency[0]*1000:.1f}／{stream.latency[1]*1000:.1f} ms（非實測）')
                         return
                     except Exception as exc:
                         if stream:
                             stream.close()
                         self.stream = None
+                        if self.renderer:
+                            self.renderer.close()
+                            self.renderer = None
                         self._restore_switch_interval()
                         failures.append(f'{rate} Hz/{dtype}: {exc}')
             raise RuntimeError('WASAPI 獨占無法啟動，未切換其他模式。\n' + '\n'.join(failures))
@@ -245,24 +303,43 @@ class ExclusivePlayer(QObject):
             scale = {'float32': 1, 'int16': 1/32768, 'int32': 1/2147483648}[self.dtype]
             np.multiply(indata, scale, out=inputs, casting='unsafe')
             self.peak = max(abs(float(inputs.min())), abs(float(inputs.max())))
-            if self.capture_enabled:
-                if len(self.capture) == self.capture.maxlen:
-                    self.capture_overflow = True
-                else:
-                    # Bounded transfer only; WAV writes happen on the UI side.
-                    self.capture.append(inputs[:, 0].copy())
             mixed = self.output_scratch[:frames, :self.channels]
             mixed.fill(0)
             start = self.frame
             count = min(frames, max(0, len(self.backing) - start))
-            if count:
+            backing = self.rendered_backing[:frames, :self.channels]
+            guide = self.rendered_guide[:frames, :self.channels]
+            backing.fill(0)
+            if self.renderer:
+                source_start = self.renderer.position
+                count = self.renderer.read_into(backing, guide, frames)
+                self.frame = self.renderer.position
+                dac_delay = max(0., float(timing.outputBufferDacTime-timing.currentTime)) if timing else 0.
+                begin_audible = time.monotonic()+dac_delay
+                self.audible_segments.append((begin_audible, begin_audible+frames/self.rate,
+                                              source_start, self.frame))
+                if self.renderer.error:
+                    raise RuntimeError(self.renderer.error)
+                np.multiply(backing, self.music_gain, out=mixed)
+            elif count:
                 np.multiply(self.backing[start:start+count], self.music_gain, out=mixed[:count])
+                backing.fill(0)
+                backing[:count] = self.backing[start:start+count]
             scratch = self.mix_scratch[:frames, :self.channels]
-            if self.guide_enabled and self.guide is not None:
+            if self.guide_enabled and self.renderer:
+                np.multiply(guide, self.guide_gain, out=scratch)
+                np.add(mixed, scratch, out=mixed)
+            elif self.guide_enabled and self.guide is not None:
                 n = min(frames, max(0, len(self.guide) - start))
                 if n:
                     np.multiply(self.guide[start:start+n], self.guide_gain, out=scratch[:n])
                     np.add(mixed[:n], scratch[:n], out=mixed[:n])
+            if self.capture_enabled:
+                if len(self.capture) == self.capture.maxlen:
+                    self.capture_overflow = True
+                else:
+                    # Save dry microphone and the exact stretched backing on the same clock.
+                    self.capture.append((inputs[:, 0].copy(), backing.copy()))
             if self.mic.monitor_enabled:
                 for channel in range(self.channels):
                     np.multiply(inputs[:, 0], self.mic.monitor_volume, out=scratch[:, channel])
@@ -271,8 +348,9 @@ class ExclusivePlayer(QObject):
             np.clip(mixed, -1, 1, out=mixed)
             multiplier = {'float32': 1, 'int16': 32767, 'int32': 2147483520}[self.dtype]
             np.multiply(mixed, multiplier, out=outdata, casting='unsafe')
-            self.frame += count
-            if self.frame >= len(self.backing):
+            if not self.renderer:
+                self.frame += count
+            if (self.renderer.ended if self.renderer else self.frame >= len(self.backing)):
                 self.ended = True
                 raise sd.CallbackStop
         except sd.CallbackStop:
@@ -291,7 +369,9 @@ class ExclusivePlayer(QObject):
         if time.monotonic() - self._last_diagnostic >= 1:
             self._last_diagnostic = time.monotonic()
             self._write_diagnostic('stats')
-            self.mic.bufferInfoChanged.emit(f'WASAPI 獨占 · 輸出缺資料 {self.output_underflow} · '
+            mode = t('WASAPI 獨占') if self.exclusive else t('WASAPI 共用')
+            render_underflow = self.renderer.underflows if self.renderer else 0
+            self.mic.bufferInfoChanged.emit(f'{mode} · 處理緩衝不足 {render_underflow} · 輸出缺資料 {self.output_underflow} · '
                 f'輸入溢位 {self.input_overflow} · 削波 {self.clipped_blocks} · callback 最大 '
                 f'{self.max_callback_seconds*1000:.2f} ms')
         if self.capture_overflow:
@@ -331,7 +411,11 @@ class ExclusivePlayer(QObject):
             finally:
                 self._restore_switch_interval()
         self._restore_switch_interval()
+        if self.renderer:
+            self.renderer.close()
+            self.renderer = None
         self._state = QMediaPlayer.PlaybackState.StoppedState
+        self.audible_segments.clear()
         self.frame = 0
         self.playbackStateChanged.emit(self._state)
 
@@ -344,6 +428,8 @@ class ExclusivePlayer(QObject):
         if not self.log_path:
             return
         record = {'event': event, 'elapsed': time.monotonic() - self.started,
+                  'exclusive': self.exclusive, 'playback_effects': self.effects,
+                  'effect_underflows': self.renderer.underflows if self.renderer else 0,
                   'rate': self.rate, 'dtype': self.dtype, 'input': str(self.input_device.description()) if self.input_device else 'default',
                   'output': str(self.output_device.description()) if self.output_device else 'default',
                   'output_underflow': self.output_underflow, 'input_overflow': self.input_overflow,

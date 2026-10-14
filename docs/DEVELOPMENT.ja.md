@@ -18,6 +18,8 @@ Windows .NET Framework C# コンパイラーも必要です。出力は `dist/Ka
 
 ## ソースからの実行
 
+既存の開発環境では、再生中の速度／キー調整用 DLL を準備するため、一度 `.\.venv\Scripts\python.exe scripts/prepare_soundtouch.py` を実行してください。新しい setup では自動的に準備します。
+
 `python` コマンドで使える Python、インターネット接続、十分なディスク容量を用意してください：
 
 ```powershell

@@ -51,6 +51,97 @@ class Reply(QObject):
 
 
 class ConsumerUiTests(unittest.TestCase):
+    def test_bottom_speed_buttons_sync_fine_slider_and_stop_at_limits(self):
+        view = self.karaoke_fixture()
+        self.window.set_live_effects = Mock()
+        view.speed_up.click()
+        self.assertEqual(view.live_speed.value(), 110)
+        self.assertEqual(view.bottom_speed_label.text(), '1.10×')
+        view.live_speed.setValue(113)
+        view.speed_down.click()
+        self.assertEqual(view.live_speed.value(), 103)
+        view.live_speed.setValue(130)
+        self.assertFalse(view.speed_up.isEnabled())
+        view.live_speed.setValue(70)
+        self.assertFalse(view.speed_down.isEnabled())
+        self.assertIs(view.live_key.parentWidget(), view.bottom_effects)
+        view.resize(640, 480)
+        self.app.processEvents()
+        self.assertEqual(view.width(), 640)
+        self.assertEqual(view.controls_panel.height(), 94)
+        view.resize(1100, 680)
+        self.app.processEvents()
+        self.assertEqual(view.controls_panel.height(), 54)
+        QTest.qWait(230)
+        self.window.set_live_effects.assert_called_once_with(.7, 0)
+        view.reset_live_effects(apply=False)
+        self.assertTrue(view.speed_down.isEnabled())
+        self.assertTrue(view.speed_up.isEnabled())
+        self.assertEqual(view.bottom_speed_label.text(), '1.00×')
+        view.close()
+
+    def test_soundtouch_management_is_independent_of_ai_model_selection(self):
+        from app.models_dialog import ModelsDialog, Preparation
+        with patch('app.models_dialog.soundtouch.ready', return_value=False):
+            dialog = ModelsDialog(self.window)
+        self.assertIn('尚未準備', dialog.soundtouch_status.text())
+        dialog.separation.setChecked(False)
+        dialog.styling.setChecked(False)
+        self.window.active_op = None
+        self.window.playing_item = None
+        with patch('app.models_dialog.QMessageBox.question', return_value=QMessageBox.StandardButton.Yes), \
+                patch('app.models_dialog.Preparation') as worker:
+            dialog.soundtouch_download.click()
+            self.assertEqual(worker.call_args.args[2], 'soundtouch')
+            worker.return_value.start.assert_called_once()
+            self.assertFalse(dialog.soundtouch_download.isEnabled())
+            dialog.on_finished()
+        with patch('app.models_dialog.soundtouch.ready', return_value=True):
+            dialog.refresh()
+        self.assertIn('已準備', dialog.soundtouch_status.text())
+        self.assertTrue(dialog.soundtouch_download.isEnabled())
+        preparation = Preparation({}, [], 'soundtouch')
+        results = []
+        preparation.result.connect(lambda *args: results.append(args))
+        with patch('app.models_dialog.soundtouch.prepare') as download, \
+                patch('app.models_dialog.ModelStore') as models:
+            preparation.run()
+            download.assert_called_once()
+            models.assert_not_called()
+        self.assertEqual(results, [('success', '')])
+        with patch('app.models_dialog.soundtouch.prepare', side_effect=ValueError('checksum mismatch')):
+            preparation.run()
+        self.assertEqual(results[-1], ('failed', 'checksum mismatch'))
+        dialog.close()
+
+    def test_live_effect_controls_are_debounced_and_reset_without_reprocessing_versions(self):
+        view = self.karaoke_fixture()
+        self.window.set_live_effects = Mock()
+        view.live_speed.setValue(70)
+        view.live_key.setValue(6)
+        self.window.set_live_effects.assert_not_called()
+        QTest.qWait(230)
+        self.window.set_live_effects.assert_called_once_with(.7, 6)
+        view.reset_live_effects()
+        self.window.set_live_effects.assert_called_with(1., 0)
+        self.assertEqual(view.live_speed.maximum(), 130)
+        self.assertEqual(view.live_key.minimum(), -6)
+        view.close()
+
+    def test_recording_preview_prefers_the_backing_actually_played(self):
+        played = self.root / 'played_backing.wav'
+        played.write_bytes(b'recorded backing fixture')
+        self.window.version_path = Mock()
+        row = dict(song_id='song', variant_id='v', played_backing_path=str(played))
+        self.assertEqual(self.window._recorded_backing(row), played)
+        self.window.version_path.assert_not_called()
+
+    def test_missing_transformed_recording_backing_does_not_play_wrong_tempo(self):
+        self.window.version_path = Mock()
+        row = dict(song_id='song', variant_id='v', played_backing='played_backing.wav')
+        self.assertIsNone(self.window._recorded_backing(row))
+        self.window.version_path.assert_not_called()
+
     def test_closing_assets_refreshes_immediate_imports_even_on_cancel(self):
         dialog = Mock()
         dialog.exec.return_value = 0

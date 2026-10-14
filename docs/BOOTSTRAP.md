@@ -6,7 +6,7 @@ Extract the complete bootstrap ZIP into a writable folder and run `KaraMorph.exe
 
 Select English, Traditional Chinese or Japanese. First launch defaults to English; an existing installation uses the saved language. Vocal separation and ACE-Step are both checked by default. Each selected group prepares a pinned Python environment and verified model files; styling also prepares the pinned ACE-Step source. Allow approximately 35–40 GiB for both features including caches. The small download package does not include the final installed environments or models.
 
-Basic playback does not need either AI group. Key/speed processing currently uses the ACE-Step runtime. Cancel preserves completed items. Failed items can be retried, or the basic UI can be used once it is ready. Normal launches use saved choices; unchecked features are not installed automatically. Use Settings → Manage installation to add features later.
+Basic playback and live speed/key adjustments do not need either AI group. UI preparation downloads and verifies the official SoundTouch 2.3.3 x64 DLL into `.tools/soundtouch/2.3.3/`, retaining its LGPL notice. Creating saved key/speed versions still uses the ACE-Step runtime. Cancel preserves completed items. Failed items can be retried, or the basic UI can be used once it is ready. Normal launches use saved choices; unchecked features are not installed automatically. Use Settings → Manage installation to add features later.
 
 ## Storage and troubleshooting
 

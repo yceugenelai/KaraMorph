@@ -9,7 +9,7 @@ from export_source import ROOT, source_paths
 
 def review(archive_path):
     archive_path = Path(archive_path)
-    scripts = {'BootstrapPoc.cs', 'bootstrap_models.py', 'bootstrap_smoke.py',
+    scripts = {'BootstrapPoc.cs', 'bootstrap_models.py', 'bootstrap_smoke.py', 'prepare_soundtouch.py',
                'requirements-ui-windows.lock.txt', 'requirements-separation-windows.lock.txt',
                'requirements-styling-windows.lock.txt'}
     root_files = {'run_app.py', 'runtime_config.py', 'LICENSE', 'THIRD_PARTY_NOTICES.md',

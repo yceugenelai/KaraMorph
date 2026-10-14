@@ -16,7 +16,7 @@ Publish the generated archive. Keep initialized installation folders, downloaded
 
 ## Included behavior
 
-Three UI languages; playback, recording, lyrics and backgrounds; separate workers for vocal separation and styling. Fixed model hashes and ACE-Step revision, verified atomic downloads, resumable partial downloads, local model import and cancellation. Data stays under the application by default. Basic playback needs no model weights; key/speed processing needs the ACE-Step runtime. Settings → Manage installation prepares features later. Preparing models does not automatically resume an AI job.
+Three UI languages; playback, recording, lyrics and backgrounds; separate workers for vocal separation and styling. Fixed model hashes and ACE-Step revision, verified atomic downloads, resumable partial downloads, local model import and cancellation. Data stays under the application by default. Basic playback and live speed/key adjustment need no model weights; creating saved key/speed versions needs the ACE-Step runtime. Live controls use the same pinned SoundTouch DLL tested in the standalone experiment, with source-time lyric tracking and aligned recorded backing. Settings → Manage installation prepares features later. Preparing models does not automatically resume an AI job.
 
 ## Known limitations
 

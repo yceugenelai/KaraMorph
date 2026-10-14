@@ -4,7 +4,7 @@
 
 KaraMorph provides only `KaraMorph-bootstrap-poc.zip` (without bundled uv). Publish the matching source ZIP and SHA-256 sidecars alongside it. This ZIP contains KaraMorph's own launcher, Python source, supplied visual assets, documentation and license texts. It contains no Python runtime, Qt/FFmpeg/CUDA libraries, model weights, music, lyrics or user settings. The MIT copyright and permission notice is included in `LICENSE`. The launcher source is supplied as `scripts/BootstrapPoc.cs`.
 
-On first launch the user downloads uv from Astral's pinned official release, then Python, pinned packages, ACE-Step source and models from their upstream hosts. These downloads have their own licenses; retain upstream installed notices. The ZIP review covers what we distribute, not permission to republish the downloaded installation. Do not upload an initialized folder or mirror dependency downloads as part of this package.
+On first launch the user downloads uv from Astral's pinned official release, then Python, pinned packages, the official SoundTouch 2.3.3 x64 DLL, ACE-Step source and models from their upstream hosts. SoundTouch is LGPL-2.1-or-later; its verified archive and DLL hashes are pinned in `app/soundtouch.py`, and its installed license/header stay beside the replaceable DLL. No SoundTouch binary is included in the lightweight ZIP. These downloads have their own licenses; retain upstream installed notices. The ZIP review covers what we distribute, not permission to republish the downloaded installation. Do not upload an initialized folder or mirror dependency downloads as part of this package.
 
 ## Checks and reproducible packaging
 

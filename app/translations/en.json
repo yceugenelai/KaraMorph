@@ -511,5 +511,19 @@
   "匯入後立即存入歌曲資料夾；原始檔案不變。縮圖設定與刪除仍需按儲存。": "Images are imported immediately into the song folder. Original files stay unchanged. Save thumbnail settings and deletions separately.",
   "可貼上或拖入圖片，完成後立即匯入。": "Paste or drop images to import them immediately.",
   "已匯入 {p0} 張圖片。": "Imported {p0} images.",
-  "素材已儲存。": "Assets saved."
+  "素材已儲存。": "Assets saved.",
+  "WASAPI 共用（相容模式）": "WASAPI shared (compatibility mode)",
+  "WASAPI 共用": "WASAPI shared",
+  "播放速度／Key": "Playback speed / key",
+  "播放速度 {p0:.2f}×": "Playback speed {p0:.2f}×",
+  "升降 Key（半音）": "Key shift (semitones)",
+  "重設播放速度／Key": "Reset playback speed / key",
+  "只調整歌曲與導唱；麥克風維持原聲。每首歌重新開始為 1.0×／0 半音。": "Adjusts music and guide vocals; microphone stays unchanged. Each song starts at 1.0× / 0 semitones.",
+  "播放調整失敗": "Playback adjustment failed",
+  "下載／修復 SoundTouch": "Download / repair SoundTouch",
+  "SoundTouch（即時調速／升降 Key）：{state}": "SoundTouch (live speed / key): {state}",
+  "將從 SoundTouch 官方網站下載並校驗 DLL，用於即時調速與升降 Key。是否開始？": "Download and verify the DLL from the official SoundTouch website for live speed and key changes. Start now?",
+  "正在下載並校驗 SoundTouch…": "Downloading and verifying SoundTouch…",
+  "元件準備失敗：{detail}": "Component preparation failed: {detail}",
+  "元件準備失敗": "Component preparation failed"
 }

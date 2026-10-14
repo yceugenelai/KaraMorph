@@ -27,7 +27,7 @@ def build(with_uv=False, repack=False):
         shutil.copy2(ROOT / name, target / name)
     scripts = target / 'scripts'
     scripts.mkdir()
-    for name in ('BootstrapPoc.cs', 'bootstrap_models.py', 'bootstrap_smoke.py', 'requirements-ui-windows.lock.txt',
+    for name in ('BootstrapPoc.cs', 'bootstrap_models.py', 'bootstrap_smoke.py', 'prepare_soundtouch.py', 'requirements-ui-windows.lock.txt',
                  'requirements-separation-windows.lock.txt', 'requirements-styling-windows.lock.txt'):
         shutil.copy2(ROOT / 'scripts' / name, scripts / name)
     shutil.copy2(ROOT / 'build/bootstrap-poc-seed/KaraMorph.exe', target / 'KaraMorph.exe')
@@ -46,18 +46,18 @@ def refresh(target):
         shutil.copytree(ROOT / directory, target / directory, dirs_exist_ok=True, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     for name in ('run_app.py', 'runtime_config.py', 'LICENSE', 'README.md', 'README.zh-TW.md', 'README.ja.md', 'THIRD_PARTY_NOTICES.md'):
         shutil.copy2(ROOT / name, target / name)
-    for name in ('BootstrapPoc.cs', 'bootstrap_models.py', 'bootstrap_smoke.py', 'requirements-ui-windows.lock.txt', 'requirements-separation-windows.lock.txt', 'requirements-styling-windows.lock.txt'):
+    for name in ('BootstrapPoc.cs', 'bootstrap_models.py', 'bootstrap_smoke.py', 'prepare_soundtouch.py', 'requirements-ui-windows.lock.txt', 'requirements-separation-windows.lock.txt', 'requirements-styling-windows.lock.txt'):
         shutil.copy2(ROOT / 'scripts' / name, target / 'scripts' / name)
     shutil.copy2(ROOT / 'build/bootstrap-poc-seed/KaraMorph.exe', target / 'KaraMorph.exe')
     (target / 'bootstrap-launcher.json').write_text('{"version": 2}\n', encoding='utf-8')
-    (target / 'README.txt').write_text('KaraMorph first-run setup\n\nExtract into a writable folder and run KaraMorph.exe. Choose English, Traditional Chinese or Japanese. Vocal separation and ACE-Step runtimes AND models are selected by default. Key/speed changes require ACE-Step runtime. Preparation may need 35-40 GiB including caches. Internet is required initially.\n\nCancel preserves completed components; retry failed components or start with the basic UI. Later launches use the saved language without installing unchecked features. Settings > Manage installation opens setup again. Logs: .app_data/logs/bootstrap.log. No models are included in this ZIP. See docs/DISTRIBUTION.md for the bootstrap ZIP distribution scope and notices.\n', encoding='utf-8')
+    (target / 'README.txt').write_text('KaraMorph first-run setup\n\nExtract into a writable folder and run KaraMorph.exe. Choose English, Traditional Chinese or Japanese. Vocal separation and ACE-Step runtimes AND models are selected by default. Live speed/key controls use SoundTouch without AI models. Creating saved speed/key versions requires ACE-Step runtime. Preparation may need 35-40 GiB including caches. Internet is required initially.\n\nCancel preserves completed components; retry failed components or start with the basic UI. Later launches use the saved language without installing unchecked features. Settings > Manage installation opens setup again. Logs: .app_data/logs/bootstrap.log. No models are included in this ZIP. See docs/DISTRIBUTION.md for the bootstrap ZIP distribution scope and notices.\n', encoding='utf-8')
 
 
 def package(target, with_uv):
     archive = target.with_suffix('.zip')
     # Collect from the current source list, not an old staging tree. This
     # prevents removed/archived files from returning in a repacked archive.
-    scripts = {'BootstrapPoc.cs', 'bootstrap_models.py', 'bootstrap_smoke.py', 'requirements-ui-windows.lock.txt',
+    scripts = {'BootstrapPoc.cs', 'bootstrap_models.py', 'bootstrap_smoke.py', 'prepare_soundtouch.py', 'requirements-ui-windows.lock.txt',
                'requirements-separation-windows.lock.txt', 'requirements-styling-windows.lock.txt'}
     files = []
     for source in source_paths(ROOT):

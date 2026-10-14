@@ -31,6 +31,7 @@ class MicrophoneService(QObject):
         self.format = None
         self.device = None
         self.record_file = None
+        self.record_backing_file = None
         self.record_temp = None
         self.record_metadata = None
         self.record_frames = 0
@@ -145,6 +146,12 @@ class MicrophoneService(QObject):
         self.record_temp = temp
         self.record_file = recording
         if self.exclusive_player:
+            backing_record = wave.open(str(folder / 'played_backing.partial.wav'), 'wb')
+            backing_record.setnchannels(self.exclusive_player.channels)
+            backing_record.setsampwidth(2)
+            backing_record.setframerate(self.format.sampleRate())
+            self.record_backing_file = backing_record
+        if self.exclusive_player:
             self.exclusive_player.capture.clear()
             self.exclusive_player.capture_enabled = True
         self.record_frames = 0
@@ -171,6 +178,15 @@ class MicrophoneService(QObject):
         self.record_metadata = None
         self.record_frames = 0
         recording.close()
+        if self.record_backing_file:
+            self.record_backing_file.close()
+            self.record_backing_file = None
+            partial_backing = temp.parent / 'played_backing.partial.wav'
+            if frames:
+                partial_backing.replace(temp.parent / 'played_backing.wav')
+                metadata['played_backing'] = 'played_backing.wav'
+            else:
+                partial_backing.unlink(missing_ok=True)
         if frames == 0:
             temp.unlink(missing_ok=True)
             temp.parent.rmdir()
@@ -227,8 +243,15 @@ class MicrophoneService(QObject):
         if self.exclusive_player:
             while self.exclusive_player.capture:
                 samples = self.exclusive_player.capture.popleft()
+                backing = None
+                if isinstance(samples, tuple):
+                    samples, backing = samples
                 if self.record_file:
                     self.record_file.writeframesraw((np.clip(samples, -1, 1) * 32767).astype('<i2').tobytes())
+                    if self.record_backing_file:
+                        if backing is None:
+                            backing = np.zeros((len(samples), self.exclusive_player.channels), np.float32)
+                        self.record_backing_file.writeframesraw((np.clip(backing, -1, 1) * 32767).astype('<i2').tobytes())
                     self.record_frames += len(samples)
             return
         if not self.input_stream:

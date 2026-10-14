@@ -18,6 +18,8 @@ powershell -ExecutionPolicy Bypass -File scripts/build-bootstrap-poc.ps1 -UiPyth
 
 ## 直接執行原始碼
 
+已準備好的舊開發環境若要啟用即時速度／Key，先執行 `.\.venv\Scripts\python.exe scripts/prepare_soundtouch.py`，下載並驗證本機 DLL；新的 setup 流程會自動完成這一步。
+
 先準備可用 `python` 呼叫的 Python、網路與足夠磁碟空間：
 
 ```powershell

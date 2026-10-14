@@ -62,11 +62,15 @@ Extract the entire bootstrap ZIP to a writable folder and run `KaraMorph.exe`. N
 
 Choose English, Traditional Chinese or Japanese. On the first launch English is selected; later launches use your saved language. Vocal separation and ACE-Step are selected by default: setup prepares their Python environments, models and pinned ACE-Step source in this folder. Both features may require roughly 35–40 GiB including download caches. The small ZIP size does not represent the installed size.
 
-Optional features can be unchecked. Basic playback works without models; key/speed changes currently require the ACE-Step runtime. Completed components are kept if preparation fails or is cancelled. Retry, or start with the available features. Settings → Manage installation can add features later; normal launches do not install previously unchecked features. [Setup and build details](docs/BOOTSTRAP.md).
+Optional features can be unchecked. Basic playback and live speed/key adjustments work without AI models; first-run setup downloads and verifies SoundTouch. Creating saved speed/key versions still requires the ACE-Step runtime. Completed components are kept if preparation fails or is cancelled. Retry, or start with the available features. Settings → Manage installation can add features later; normal launches do not install previously unchecked features. [Setup and build details](docs/BOOTSTRAP.md).
 
 NVIDIA CUDA is preferred for AI processing. Long tracks or insufficient VRAM can use CPU after confirmation; CPU styling is slow and needs substantial RAM. AMD/Intel GPU acceleration is not supported in this preview. Windows 11 x64 is the primary target; audio devices and drivers vary. WASAPI exclusive output can prevent other apps from using the same device.
 
 ## Everyday use
+
+The karaoke window's bottom controls adjust speed from 0.7–1.3× and key by ±6 semitones during playback. Speed −/+ buttons change it by 0.1×; **More settings → Playback speed / key** retains the slider for fine adjustments and a reset button for speed and key. Changes affect the current music version and guide vocals; microphone monitoring and dry recordings stay unchanged. Each song starts with neutral settings, and lyrics follow its source position. Whole-song recordings additionally save the backing actually played as a WAV for synchronized preview, using extra disk space. Both shared and exclusive playback support this feature; it does not create a new song version.
+
+**Model and component management** shows SoundTouch's installation and verification status and lets you download or repair it independently of the AI models.
 
 The processing library follows the actual music folder. Click Reload songs after adding, removing or moving files. Missing originals disappear from this list; generated audio, recordings and assets remain on disk. Existing playlist items stay marked unavailable until their original source returns. There is no persistent song blacklist.
 

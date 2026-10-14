@@ -34,7 +34,7 @@ class BootstrapPoc : Form {
     DateTime lastProgress=DateTime.MinValue;
     readonly Dictionary<string,string[]> words = new Dictionary<string,string[]> {
         {"title",new[]{"KaraMorph — Setup","KaraMorph — 啟動設定","KaraMorph — 初期設定"}},
-        {"intro",new[]{"Prepare components and models in this folder. Internet is required. Both AI features may need about 35–40 GiB including download caches. Key/speed changes also require the ACE-Step runtime.","環境與模型都會放在此目錄，需要網路。兩項 AI 功能含下載快取約需 35–40 GiB。調 key／速度也需要 ACE-Step 執行環境。","環境とモデルをこのフォルダーに準備します。インターネットが必要です。両方の AI 機能はキャッシュ込みで約35～40 GiB必要です。キー・速度の変更にも ACE-Step 実行環境が必要です。"}},
+        {"intro",new[]{"Prepare components and models in this folder. Internet is required. Both AI features may need about 35–40 GiB including download caches. Live speed/key controls use SoundTouch without AI models; creating adjusted files requires the ACE-Step runtime.","環境與模型都會放在此目錄，需要網路。兩項 AI 功能含下載快取約需 35–40 GiB。播放中的速度／Key 使用 SoundTouch，不需 AI 模型；另存調整版本才需要 ACE-Step 執行環境。","環境とモデルをこのフォルダーに準備します。インターネットが必要です。両方の AI 機能はキャッシュ込みで約35～40 GiB必要です。再生中の速度／キー調整は SoundTouch を使用し、AI モデルは不要です。調整版の保存には ACE-Step 実行環境が必要です。"}},
         {"separation",new[]{"Install vocal separation + models","安裝人聲分離與模型","ボーカル分離とモデルをインストール"}},
         {"styling",new[]{"Install ACE-Step + models","安裝 ACE-Step 與模型","ACE-Step とモデルをインストール"}},
         {"start",new[]{"Prepare / retry","準備／重試","準備／再試行"}},
@@ -201,13 +201,20 @@ class BootstrapPoc : Form {
             if(File.Exists(managedMarker)) File.Delete(managedMarker);
             string index = component == "ui" ? "" : " --extra-index-url https://download.pytorch.org/whl/" + (component == "styling" ? "cu128" : "cu124") + " --index-strategy unsafe-best-match";
             Run(uv,"--no-config pip sync --system --python " + Q(python) + " " + Q(requirements) + " --only-binary :all:" + index);
-            if(component == "ui") Run(python, Q(P("scripts/bootstrap_smoke.py")));
+            if(component == "ui") {
+                Run(python, Q(P("scripts/prepare_soundtouch.py")));
+                Run(python, Q(P("scripts/bootstrap_smoke.py")));
+            }
             else Run(python,"-c " + Q("import torch,soundfile,imageio_ffmpeg,subprocess; from runtime_config import bootstrap_worker; bootstrap_worker(); subprocess.run(['ffmpeg','-version'],check=True,stdout=subprocess.DEVNULL); print('AI runtime and FFmpeg imports passed')"));
             File.WriteAllText(P(".app_data/bootstrap-" + component + ".ready"), Hash(requirements));
             Report("Ready: " + component);
         }
     }
     bool RuntimeReady(string component) {
+        if(component == "ui") {
+            string dll=P(".tools/soundtouch/2.3.3/SoundTouchDLL_x64.dll");
+            if(!File.Exists(dll) || Hash(dll)!="33caafa82b5e89e66d2ca4f9e2137aae1a1e2693f119c62236295878c61406ea") return false;
+        }
         string stamp=P(".app_data/bootstrap-"+component+".ready");
         return File.Exists(P(".runtime/"+component+"/python.exe")) && File.Exists(stamp) &&
             File.ReadAllText(stamp).Trim()==Hash(P("scripts/requirements-"+component+"-windows.lock.txt"));

@@ -31,6 +31,7 @@ foreach ($entry in @(@('.venv', $py310), @('.runtime/separation', $py310), @('.r
     Invoke-Checked (Join-Path $envPath 'Scripts/python.exe') @('-c', 'import pathlib,sys; root=pathlib.Path(sys.argv[1]).resolve(); base=pathlib.Path(sys.base_prefix).resolve(); assert root in base.parents, base', '.runtime/python')
 }
 Invoke-Checked $uv @('pip', 'sync', '--python', '.venv/Scripts/python.exe', 'scripts/requirements-ui-windows.lock.txt')
+Invoke-Checked (Join-Path $projectPath '.venv/Scripts/python.exe') @('scripts/prepare_soundtouch.py')
 Invoke-Checked $uv @('pip', 'sync', '--python', '.runtime/separation/Scripts/python.exe', 'scripts/requirements-separation-windows.lock.txt', '--extra-index-url', 'https://download.pytorch.org/whl/cu124', '--index-strategy', 'unsafe-best-match')
 Invoke-Checked $uv @('pip', 'sync', '--python', '.runtime/styling/Scripts/python.exe', 'scripts/requirements-styling-windows.lock.txt', '--extra-index-url', 'https://download.pytorch.org/whl/cu128', '--index-strategy', 'unsafe-best-match')
 $assetArgs = @('scripts/prepare_assets.py')

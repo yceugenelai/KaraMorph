@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import wave
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -69,7 +70,102 @@ class ExclusiveTests(unittest.TestCase):
             with wave.open(str(files[0])) as recording:
                 self.assertEqual(recording.getnframes(), 256)
                 self.assertEqual(recording.getnchannels(), 1)
+            metadata = json.loads((files[0].parent / 'session.json').read_text())
+            self.assertEqual(metadata['played_backing'], 'played_backing.wav')
+            with wave.open(str(files[0].parent / 'played_backing.wav')) as backing:
+                self.assertEqual(backing.getnframes(), 256)
+                self.assertEqual(backing.getnchannels(), 2)
+                samples = np.frombuffer(backing.readframes(256), '<i2').reshape(-1, 2)
+                np.testing.assert_allclose(samples[:240]/32767, .2, atol=.0001)
             mic.stop()
+
+    def test_effect_audio_and_microphone_stay_separate_and_use_audible_source_time(self):
+        mic, player = self.make_player(length=48000)
+        player.stream = Mock()
+        player.music_gain = .5
+        player.guide_gain = .5
+        player.guide_enabled = True
+        mic.monitor_enabled = True
+        mic.monitor_volume = .5
+        renderer = Mock()
+        renderer.position = 0
+        renderer.ended = False
+        renderer.error = None
+        def rendered(backing, guide, count):
+            backing.fill(.3)
+            guide.fill(.1)
+            renderer.position = 256
+            return count
+        renderer.read_into.side_effect = rendered
+        player.renderer = renderer
+        with tempfile.TemporaryDirectory() as folder:
+            mic.start_recording(Path(folder), 'song', 'variant', Path('backing.wav'))
+            with patch('app.exclusive_audio.time.monotonic', return_value=10.):
+                player._callback(np.full((128, 2), .1, np.float32),
+                                 output := np.empty((128, 2), np.float32), 128,
+                                 SimpleNamespace(outputBufferDacTime=1.1, currentTime=1.), None)
+            mic.finish_recording()
+            for name, level in [('microphone.wav', .1), ('played_backing.wav', .3)]:
+                path = next(Path(folder).rglob(name))
+                with wave.open(str(path)) as audio:
+                    self.assertEqual(audio.getnframes(), 128)
+                    samples = np.frombuffer(audio.readframes(128), '<i2') / 32767
+                    np.testing.assert_allclose(samples, level, atol=.0001)
+        np.testing.assert_allclose(output, .25, atol=1e-6)
+        with patch('app.exclusive_audio.time.monotonic', return_value=10.1):
+            self.assertEqual(player.position(), 0)
+        with patch('app.exclusive_audio.time.monotonic', return_value=10.2):
+            self.assertEqual(player.position(), round(256*1000/48000))
+        mic.stop()
+
+    def test_shared_mode_prepares_the_same_pipeline_without_exclusive_device_flags(self):
+        mic = MicrophoneService()
+        player = ExclusivePlayer(mic, exclusive=False)
+        mic.exclusive_player = player
+        mic.device = Mock()
+        mic.device.description.return_value = 'test mic'
+        mic.device.id.return_value = b'test'
+        pcm = np.zeros((5000, 2), np.float32)
+        stream = Mock()
+        stream.latency = (.01, .01)
+        with patch('app.exclusive_audio.device_index', return_value=0), \
+             patch('app.exclusive_audio.sd.query_devices', return_value=dict(max_input_channels=2, max_output_channels=2, default_samplerate=48000)), \
+             patch('app.exclusive_audio.sd.check_input_settings'), patch('app.exclusive_audio.sd.check_output_settings'), \
+             patch('app.exclusive_audio.sd.WasapiSettings') as wasapi, \
+             patch('app.exclusive_audio.sd.Stream', return_value=stream), \
+             patch('app.exclusive_audio.read_audio', return_value=pcm), \
+             patch.object(player, '_write_diagnostic'):
+            try:
+                player.play()
+                self.assertIsNotNone(player.renderer)
+                self.assertTrue(all(call.kwargs == dict(exclusive=False) for call in wasapi.call_args_list))
+                stream.start.assert_called_once()
+            finally:
+                mic.stop()
+
+    def test_seek_keeps_requested_target_even_if_final_callback_advances_old_clock(self):
+        mic, player = self.make_player(length=48000)
+        player.stream = Mock()
+        player.renderer = Mock()
+        player.stream.stop.side_effect = lambda: setattr(player, 'frame', 1234)
+        replacement = Mock()
+        with patch('app.exclusive_audio.PlaybackRenderer', return_value=replacement) as factory:
+            player.setPosition(500)
+        self.assertEqual(factory.call_args.args[3], 24000)
+        self.assertEqual(player.frame, 24000)
+        mic.stop()
+
+    def test_failed_seek_stops_instead_of_resuming_a_closed_worker(self):
+        mic, player = self.make_player(length=48000)
+        player.stream = Mock()
+        player.renderer = Mock()
+        with patch('app.exclusive_audio.PlaybackRenderer', side_effect=RuntimeError('fixture')):
+            with self.assertRaisesRegex(RuntimeError, 'fixture'):
+                player.setPosition(500)
+        self.assertIsNone(player.stream)
+        self.assertIsNone(player.renderer)
+        self.assertEqual(player.playbackState(), QMediaPlayer.PlaybackState.StoppedState)
+        mic.stop()
 
     def test_bounded_recording_buffer_reports_overflow(self):
         mic, player = self.make_player(length=48000)

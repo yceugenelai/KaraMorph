@@ -18,6 +18,8 @@ The build also needs the Windows .NET Framework C# compiler. Output: `dist/KaraM
 
 ## Running from source
 
+For an existing development environment, run `.\.venv\Scripts\python.exe scripts/prepare_soundtouch.py` once to prepare the verified DLL for live speed/key controls. New setup runs do this automatically.
+
 Start with an installed Python available as `python`, internet access and sufficient disk space:
 
 ```powershell

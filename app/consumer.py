@@ -191,6 +191,11 @@ class ConsumerWindow(QMainWindow):
         self.player.playbackStateChanged.connect(self._sync_guide_state)
         self.qt_player = self.player
         self.exclusive_player = ExclusivePlayer(self.microphone, self)
+        self.shared_player = ExclusivePlayer(self.microphone, self, exclusive=False)
+        self.shared_player.mediaStatusChanged.connect(self._media_status)
+        self.shared_player.errorOccurred.connect(self._exclusive_error)
+        self.audio.volumeChanged.connect(lambda value: setattr(self.shared_player, 'music_gain', value))
+        self.guide_audio.volumeChanged.connect(lambda value: setattr(self.shared_player, 'guide_gain', value))
         self.exclusive_player.mediaStatusChanged.connect(self._media_status)
         self.exclusive_player.errorOccurred.connect(self._exclusive_error)
         self.audio.volumeChanged.connect(lambda value: setattr(self.exclusive_player, 'music_gain', value))
@@ -630,7 +635,7 @@ class ConsumerWindow(QMainWindow):
         form.addRow(t('麥克風'), microphone_row)
         self.singing_audio_mode = QComboBox()
         self.singing_audio_mode.addItem(t('WASAPI 獨占（低延遲，預設）'), "exclusive")
-        self.singing_audio_mode.addItem(t('Qt 共用（相容模式）'), "shared")
+        self.singing_audio_mode.addItem(t('WASAPI 共用（相容模式）'), "shared")
         self.singing_audio_mode.setCurrentIndex(1 if self.settings.get("singing_audio_mode", "exclusive") == "shared" else 0)
         form.addRow(t('唱歌音訊模式'), self.singing_audio_mode)
         audio_note = QLabel(t('獨占會將伴奏、導唱與麥克風一起播放；設備需允許獨占。切換模式前請停止唱歌。'))
@@ -1274,10 +1279,12 @@ class ConsumerWindow(QMainWindow):
     def _start_singing_from(self, start):
         self.stop_playback()
         exclusive = self.settings.get("singing_audio_mode", "exclusive") == "exclusive"
-        self.player = self.exclusive_player if exclusive else self.qt_player
-        self.microphone.exclusive_player = self.exclusive_player if exclusive else None
+        self.player = self.exclusive_player if exclusive else self.shared_player
+        self.microphone.exclusive_player = self.player
         self.exclusive_player.music_gain = self.audio.volume()
         self.exclusive_player.guide_gain = self.guide_audio.volume()
+        self.shared_player.music_gain = self.audio.volume()
+        self.shared_player.guide_gain = self.guide_audio.volume()
         if self.karaoke_window is None:
             self.karaoke_window = KaraokeWindow(self)
         self.karaoke_window.show()
@@ -1317,6 +1324,13 @@ class ConsumerWindow(QMainWindow):
                 self.playing_item = self.queue.item(index)
                 self.now_playing.setText(t('正在播放  {p0}', p0=self.queue_display_label(item)))
                 self.player.setSource(QUrl.fromLocalFile(str(path)))
+                if self.player in (self.exclusive_player, self.shared_player):
+                    self.player.set_effects(1., 0)
+                    guide = self._preview_paths(item['song_id'], item['variant_id'])[1] if item['variant_id'] != 'original' else None
+                    self.player.set_guide(guide)
+                    self.player.guide_enabled = bool(guide and self.audio_preferences['guide_enabled'])
+                if self.karaoke_window:
+                    self.karaoke_window.reset_live_effects(apply=False)
                 try:
                     self.player.play()
                 except Exception as error:
@@ -1458,10 +1472,10 @@ class ConsumerWindow(QMainWindow):
         self.guide_player.stop()
         checkbox = self.karaoke_window.guide_checkbox
         self.karaoke_window.set_guide_available(bool(path))
-        if self.player is self.exclusive_player:
+        if self.player in (self.exclusive_player, self.shared_player):
             try:
-                self.exclusive_player.set_guide(path)
-                self.exclusive_player.guide_enabled = bool(path) and checkbox.isChecked()
+                self.player.set_guide(path)
+                self.player.guide_enabled = bool(path) and checkbox.isChecked()
             except Exception as error:
                 self.karaoke_window.set_guide_available(False)
                 QMessageBox.warning(self, t('導唱無法使用'), str(error))
@@ -1472,8 +1486,8 @@ class ConsumerWindow(QMainWindow):
             self.set_guide_vocal(True)
 
     def set_guide_vocal(self, enabled):
-        if self.player is self.exclusive_player:
-            self.exclusive_player.guide_enabled = bool(enabled and self.guide_vocal_path)
+        if self.player in (self.exclusive_player, self.shared_player):
+            self.player.guide_enabled = bool(enabled and self.guide_vocal_path)
             return
         if not enabled or not self.guide_vocal_path:
             self.guide_player.stop()
@@ -1544,6 +1558,9 @@ class ConsumerWindow(QMainWindow):
         self.playing_item = None
         self.record_checkbox.setEnabled(True)
         self.now_playing.setText(t('已停止播放'))
+
+    def set_live_effects(self, tempo, key):
+        self.player.set_effects(tempo, key) if self.player in (self.exclusive_player, self.shared_player) else None
 
     def _record_choice_changed(self, checked):
         self.record_checkbox.setText(t('播放時錄音') if checked else t('整首錄音'))
@@ -1768,7 +1785,7 @@ class ConsumerWindow(QMainWindow):
         self.stop_playback()
         self._apply_output_device()
         self.record_preview = row
-        backing = self.version_path(song_id, row.get("variant_id", "original"))
+        backing = self._recorded_backing(row)
         self.record_preview_check.setEnabled(bool(backing))
         if not backing:
             self.record_preview_check.setChecked(False)
@@ -1793,7 +1810,7 @@ class ConsumerWindow(QMainWindow):
         if not self.record_preview_check.isChecked():
             self.record_backing_player.stop()
             return
-        backing = self.version_path(self.record_preview["song_id"], self.record_preview.get("variant_id", "original"))
+        backing = self._recorded_backing(self.record_preview)
         if backing:
             if self.record_backing_player.source().toLocalFile() != str(backing):
                 self.record_backing_player.setSource(QUrl.fromLocalFile(str(backing)))
@@ -1804,7 +1821,8 @@ class ConsumerWindow(QMainWindow):
         if not self.record_preview or not self.record_preview_check.isChecked():
             return
         target = max(0, self.preview_player.position() + self.record_offset.value()
-                     + int(self.record_preview.get("playback_start_offset_ms", 0)))
+                     + (0 if self.record_preview.get('played_backing_path') else
+                        int(self.record_preview.get("playback_start_offset_ms", 0))))
         if force or abs(self.record_backing_player.position() - target) > 250:
             self.record_backing_player.setPosition(target)
         state = self.preview_player.playbackState()
@@ -1812,6 +1830,16 @@ class ConsumerWindow(QMainWindow):
             self.record_backing_player.pause()
         elif state == QMediaPlayer.PlaybackState.PlayingState and self.record_backing_player.playbackState() != state:
             self.record_backing_player.play()
+
+    def _recorded_backing(self, recording):
+        played = recording.get('played_backing_path')
+        if played and Path(played).is_file():
+            return Path(played)
+        if recording.get('played_backing') == 'played_backing.wav':
+            # A missing transformed snapshot cannot be replaced by the original
+            # backing without changing its tempo/key and breaking alignment.
+            return None
+        return self.version_path(recording['song_id'], recording.get('variant_id', 'original'))
 
     def remove_recording(self, song_id, session_id):
         if QMessageBox.question(self, t('刪除錄音'), t('確定刪除這次錄音？')) != QMessageBox.StandardButton.Yes:

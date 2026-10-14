@@ -26,7 +26,11 @@ def load_recordings(workspace: Path, song_id: str) -> list[dict]:
             row = json.loads(metadata.read_text(encoding="utf-8"))
             if row.get("song_id") != song_id or row.get("session_id") != folder.name:
                 continue
-            result.append({**row, "audio_path": str(audio)})
+            played_backing = folder / 'played_backing.wav'
+            extra = ({'played_backing_path': str(played_backing)} if
+                     row.get('played_backing') == 'played_backing.wav' and played_backing.is_file()
+                     and not played_backing.is_symlink() else {})
+            result.append({**row, **extra, "audio_path": str(audio)})
         except (OSError, ValueError, TypeError):
             continue
     return sorted(result, key=lambda row: (row.get("started_at", ""), row["session_id"]))

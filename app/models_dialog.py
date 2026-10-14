@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLa
 from app.i18n import t
 from app.model_store import Cancelled, ModelStore
 from app.storage import save_settings
+from app import soundtouch
 from runtime_config import ROOT, configured_path, runtime
 
 
@@ -24,8 +25,13 @@ class Preparation(QThread):
 
     def run(self):
         try:
-            ModelStore(self.settings).prepare(self.groups, self.cancelled, self.progress.emit,
-                import_root=self.import_root, verify_only=self.mode == 'verify')
+            if self.mode == 'soundtouch':
+                soundtouch.prepare()
+                if self.cancelled.is_set():
+                    raise Cancelled()
+            else:
+                ModelStore(self.settings).prepare(self.groups, self.cancelled, self.progress.emit,
+                    import_root=self.import_root, verify_only=self.mode == 'verify')
             self.result.emit('success', '')
         except Cancelled:
             self.result.emit('cancelled', '')
@@ -56,8 +62,14 @@ class ModelsDialog(QDialog):
         layout.addWidget(self.details)
         self.separation.toggled.connect(self.refresh)
         self.styling.toggled.connect(self.refresh)
+        self.soundtouch_status = QLabel()
+        self.soundtouch_status.setWordWrap(True)
+        layout.addWidget(self.soundtouch_status)
+        self.soundtouch_download = QPushButton(t('下載／修復 SoundTouch'))
+        self.soundtouch_download.clicked.connect(lambda: self.start('soundtouch'))
+        layout.addWidget(self.soundtouch_download)
         row = QHBoxLayout()
-        self.actions = []
+        self.actions = [self.soundtouch_download]
         for title, action in [(t('下載／修復'), lambda: self.start('download')),
                               (t('重新校驗'), lambda: self.start('verify')),
                               (t('匯入已有模型'), self.import_models), (t('選擇模型位置'), self.choose_folder)]:
@@ -88,6 +100,9 @@ class ModelsDialog(QDialog):
         return ([g for g, box in [('separation', self.separation), ('styling', self.styling)] if box.isChecked()])
 
     def refresh(self, *_):
+        state = t('已準備') if soundtouch.ready() else t('尚未準備')
+        self.soundtouch_status.setText(t('SoundTouch（即時調速／升降 Key）：{state}', state=state)
+                                      + '\n' + str(soundtouch.library_path()))
         store = ModelStore(self.controller.settings)
         size = store.download_bytes(self.groups()) / 2**30
         free = shutil.disk_usage(ROOT).free / 2**30
@@ -122,13 +137,15 @@ class ModelsDialog(QDialog):
             self.start('import', folder)
 
     def start(self, mode, import_root=None):
-        if self.worker is not None or not self.groups():
+        if self.worker is not None or (mode != 'soundtouch' and not self.groups()):
             return
         if self.controller.active_op is not None or self.controller.playing_item is not None:
             QMessageBox.information(self, t('模型與元件管理'), t('請先停止播放並等待處理完成，再準備模型。'))
             return
-        if mode == 'download':
-            message = t('將從 Hugging Face／GitHub 下載勾選功能的固定版本資產。請確認來源授權及磁碟空間。是否開始？')
+        if mode in ('download', 'soundtouch'):
+            message = (t('將從 SoundTouch 官方網站下載並校驗 DLL，用於即時調速與升降 Key。是否開始？')
+                       if mode == 'soundtouch' else
+                       t('將從 Hugging Face／GitHub 下載勾選功能的固定版本資產。請確認來源授權及磁碟空間。是否開始？'))
             if QMessageBox.question(self, t('下載／修復'), message,
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
@@ -139,6 +156,8 @@ class ModelsDialog(QDialog):
         self.cancel.setEnabled(True)
         self.started = time.monotonic()
         self.progress.setRange(0, 0)
+        if mode == 'soundtouch':
+            self.status.setText(t('正在下載並校驗 SoundTouch…'))
         self.worker.progress.connect(self.on_progress)
         self.worker.result.connect(self.on_result)
         self.worker.finished.connect(self.on_finished)
@@ -160,9 +179,9 @@ class ModelsDialog(QDialog):
         self.progress.setRange(0, 100)
         self.progress.setValue(100 if result == 'success' else 0)
         self.status.setText(t('準備完成') if result == 'success' else t('已取消，已完成的資產保留；可重新開始。')
-                            if result == 'cancelled' else t('模型準備失敗：{detail}', detail=detail))
+                            if result == 'cancelled' else t('元件準備失敗：{detail}', detail=detail))
         if result == 'failed':
-            QMessageBox.warning(self, t('模型準備失敗'), detail)
+            QMessageBox.warning(self, t('元件準備失敗'), detail)
 
     def on_finished(self):
         self.worker.deleteLater()

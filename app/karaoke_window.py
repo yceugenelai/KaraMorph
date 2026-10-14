@@ -8,7 +8,7 @@ import random
 import numpy as np
 from PySide6.QtCore import QElapsedTimer, QEvent, QRectF, QSize, QTimer, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPixmap
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget, QWidgetAction
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QSizePolicy, QSlider, QSpinBox, QVBoxLayout, QWidget, QWidgetAction
 from PySide6.QtMultimedia import QMediaPlayer
 from app.ui_icons import icon
 from app.application_identity import application_icon
@@ -263,14 +263,42 @@ class KaraokeWindow(QWidget):
         layout.addWidget(self.canvas, 1)
         self.controls_panel = QWidget()
         self.controls_panel.setFixedHeight(54)
-        bar = QHBoxLayout(self.controls_panel)
-        bar.setContentsMargins(10, 8, 10, 8)
+        self.controls_panel.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.controls_layout = QVBoxLayout(self.controls_panel)
+        self.controls_layout.setContentsMargins(10, 8, 10, 8)
+        self.controls_layout.setSpacing(4)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(0, 0, 0, 0)
+        self.controls_layout.addLayout(bar)
         bar.setSpacing(6)
         bar.addWidget(self._icon_button("previous", t('上一首'), self.controller.previous_song))
         self.play_button = self._icon_button("play", t('播放'), self.controller.toggle_pause)
         bar.addWidget(self.play_button)
         bar.addWidget(self._icon_button("stop", t('停止'), self.controller.stop_playback))
         bar.addWidget(self._icon_button("next", t('下一首'), self.controller.next_song))
+        self.bottom_effects = QWidget()
+        effect_bar = QHBoxLayout(self.bottom_effects)
+        effect_bar.setContentsMargins(0, 0, 0, 0)
+        effect_bar.setSpacing(6)
+        self.speed_down = QPushButton('-')
+        self.speed_up = QPushButton('+')
+        self.bottom_speed_label = QLabel('1.00×')
+        for button, step in ((self.speed_down, -10), (self.speed_up, 10)):
+            button.setFixedSize(28, 32)
+            button.setToolTip(t('播放速度') + f' {step / 100:+.1f}×')
+            button.setAccessibleName(button.toolTip())
+            button.clicked.connect(lambda checked=False, delta=step:
+                                   self.live_speed.setValue(self.live_speed.value() + delta))
+        effect_bar.addWidget(self.speed_down)
+        effect_bar.addWidget(self.bottom_speed_label)
+        effect_bar.addWidget(self.speed_up)
+        effect_bar.addWidget(QLabel('Key'))
+        self.live_key = QSpinBox()
+        self.live_key.setRange(-6, 6)
+        self.live_key.setFixedWidth(100)
+        self.live_key.setAccessibleName(t('升降 Key（半音）'))
+        effect_bar.addWidget(self.live_key)
+        bar.addWidget(self.bottom_effects)
         bar.addStretch()
         music = QLabel()
         music.setPixmap(icon("music").pixmap(22, 22))
@@ -297,6 +325,29 @@ class KaraokeWindow(QWidget):
         bar.addWidget(self.more_button)
         layout.addWidget(self.controls_panel)
         self.more_menu = QMenu(self)
+        self.effects_menu = self.more_menu.addMenu(t('播放速度／Key'))
+        _, effects_layout = self._menu_panel(self.effects_menu)
+        self.live_speed_label = QLabel(t('播放速度 {p0:.2f}×', p0=1.))
+        effects_layout.addWidget(self.live_speed_label)
+        self.live_speed = QSlider(Qt.Orientation.Horizontal)
+        self.live_speed.setRange(70, 130)
+        self.live_speed.setValue(100)
+        self.live_speed.setMinimumWidth(220)
+        self.live_speed.setAccessibleName(t('播放速度'))
+        effects_layout.addWidget(self.live_speed)
+        reset_effects = QPushButton(t('重設播放速度／Key'))
+        reset_effects.clicked.connect(lambda: self.reset_live_effects())
+        effects_layout.addWidget(reset_effects)
+        effects_note = QLabel(t('只調整歌曲與導唱；麥克風維持原聲。每首歌重新開始為 1.0×／0 半音。'))
+        effects_note.setWordWrap(True)
+        effects_note.setMaximumWidth(280)
+        effects_layout.addWidget(effects_note)
+        self.effects_timer = QTimer(self)
+        self.effects_timer.setSingleShot(True)
+        self.effects_timer.setInterval(180)
+        self.effects_timer.timeout.connect(self._apply_live_effects)
+        self.live_speed.valueChanged.connect(self._live_effects_changed)
+        self.live_key.valueChanged.connect(self._live_effects_changed)
         self.more_button.clicked.connect(lambda: self.more_menu.popup(self.more_button.mapToGlobal(self.more_button.rect().topLeft())))
         self.guide_menu = self.more_menu.addMenu(t('導唱音量'))
         self.guide_menu_widget, self.guide_menu_layout = self._menu_panel(self.guide_menu)
@@ -383,7 +434,7 @@ class KaraokeWindow(QWidget):
         QMessageBox.information(self, t('整首錄音'), self.record_status.toolTip() + t('\n請在歌單頁播放前設定整首錄音，播放中不提供錄音切換。'))
 
     def _update_device_info(self):
-        mode = t('WASAPI 獨占') if self.controller.settings.get("singing_audio_mode", "exclusive") == "exclusive" else t('Qt 共用')
+        mode = t('WASAPI 獨占') if self.controller.settings.get("singing_audio_mode", "exclusive") == "exclusive" else t('WASAPI 共用')
         self.device_info.setText(t('播放：{p0}\n輸出：{p1}\n麥克風：{p2}\n設備選擇請到設定頁。', p0=mode, p1=self.controller.audio_device.currentText(), p2=self.controller.microphone_device.currentText()))
 
     def _update_controls_state(self, *_):
@@ -421,17 +472,24 @@ class KaraokeWindow(QWidget):
         if not hasattr(self, "guide_volume"):
             return
         self.title.setText(self.title.fontMetrics().elidedText(self.full_title, Qt.TextElideMode.ElideRight, self.title.width()))
-        compact = self.width() < 820
+        compact = self.width() < 1020
         if compact != self._compact:
             self._compact = compact
             if compact:
+                self.guide_bar_layout.removeWidget(self.bottom_effects)
+                self.controls_layout.addWidget(self.bottom_effects, 0, Qt.AlignmentFlag.AlignHCenter)
+                self.controls_panel.setFixedHeight(94)
                 self.guide_bar_layout.removeWidget(self.guide_volume)
                 self.guide_menu_layout.addWidget(self.guide_volume)
             else:
+                self.controls_layout.removeWidget(self.bottom_effects)
+                self.guide_bar_layout.insertWidget(4, self.bottom_effects)
+                self.controls_panel.setFixedHeight(54)
                 self.guide_menu_layout.removeWidget(self.guide_volume)
                 self.guide_bar_layout.insertWidget(self.guide_bar_layout.indexOf(self.guide_checkbox) + 1, self.guide_volume)
             self.guide_menu.menuAction().setVisible(compact)
             self.guide_volume.show()
+            self.bottom_effects.show()
 
     def set_song(self, title: str, lyrics: str, images: list[Path], duration_ms: int,
                  timeline=None, playback_speed=1.0, delay_ms=0, save_delay=None):
@@ -579,11 +637,44 @@ class KaraokeWindow(QWidget):
         self.music_volume.setToolTip(t('音樂音量 {p0}%', p0=value))
         self.controller._set_singing_volume(value)
 
+    def _live_effects_changed(self, *_):
+        self.live_speed_label.setText(t('播放速度 {p0:.2f}×', p0=self.live_speed.value()/100))
+        self._sync_effect_buttons()
+        self.effects_timer.start()
+
+    def _sync_effect_buttons(self):
+        self.bottom_speed_label.setText(f'{self.live_speed.value()/100:.2f}×')
+        self.speed_down.setEnabled(self.live_speed.value() > self.live_speed.minimum())
+        self.speed_up.setEnabled(self.live_speed.value() < self.live_speed.maximum())
+
+    def _apply_live_effects(self):
+        try:
+            self.controller.set_live_effects(self.live_speed.value()/100, self.live_key.value())
+        except Exception as error:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, t('播放調整失敗'), str(error))
+            settings = getattr(self.controller.player, 'effects', (1., 0))
+            self.reset_live_effects(apply=False, settings=settings)
+
+    def reset_live_effects(self, apply=True, settings=(1., 0)):
+        self.effects_timer.stop()
+        self.live_speed.blockSignals(True)
+        self.live_key.blockSignals(True)
+        self.live_speed.setValue(round(settings[0]*100))
+        self.live_key.setValue(settings[1])
+        self.live_speed.blockSignals(False)
+        self.live_key.blockSignals(False)
+        self.live_speed_label.setText(t('播放速度 {p0:.2f}×', p0=settings[0]))
+        self._sync_effect_buttons()
+        if apply:
+            self._apply_live_effects()
+
     def _guide_volume_changed(self, value):
         self.guide_volume.setToolTip(t('導唱音量 {p0}%', p0=value))
         self.controller._set_guide_volume(value)
 
     def closeEvent(self, event):
+        self.effects_timer.stop()
         self.set_guide_available(False)
         self.controller.stop_playback()
         self.set_monitor_checked(False)
