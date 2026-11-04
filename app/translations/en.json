@@ -535,5 +535,11 @@
   "已是我的最佳：{p0:.2f}×，Key {p1:+d}": "Already my best: {p0:.2f}×, key {p1:+d}",
   "更新我的最佳（目前已存 {p0:.2f}×，Key {p1:+d}）": "Update my best (saved: {p0:.2f}×, key {p1:+d})",
   "套用我的最佳": "Apply my best",
-  "切換到我的最佳（{p0:.2f}×，Key {p1:+d}）": "Switch to my best ({p0:.2f}×, key {p1:+d})"
+  "切換到我的最佳（{p0:.2f}×，Key {p1:+d}）": "Switch to my best ({p0:.2f}×, key {p1:+d})",
+  "個人設定檔": "Profile",
+  "新增個人設定檔": "New profile",
+  "個人設定檔名稱": "Profile name",
+  "刪除目前的個人設定檔": "Delete current profile",
+  "請先停止播放，再切換個人設定檔。": "Stop playback before switching profiles.",
+  "刪除個人設定檔「{p0}」？歌單與最佳設定會被刪除，錄音檔仍保留在磁碟上。": "Delete profile \"{p0}\"? Its playlist and best settings are removed; recordings stay on disk."
 }

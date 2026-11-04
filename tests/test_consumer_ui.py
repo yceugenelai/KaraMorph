@@ -553,6 +553,35 @@ class ConsumerUiTests(unittest.TestCase):
         self.assertEqual((view.live_speed.value(), view.live_key.value()), (100, 0))
         view.close()
 
+    def test_profiles_keep_preferences_playlist_and_recordings_separate(self):
+        self.populate(1)
+        self.window._set_singing_volume(33)
+        self.window._append_queue(dict(song_id='s0', variant_id='original', label='Song 0'))
+        self.window._switch_profile('Guest')
+        self.assertEqual(self.window.profiles.active, 'Guest')
+        self.assertEqual(self.settings['active_profile'], 'Guest')
+        self.assertEqual(self.window.sing_volume.value(), 80)
+        self.assertEqual(self.window.queue.count(), 0)
+        self.assertEqual(self.window.profile_box.currentData(), 'Guest')
+        self.assertTrue(self.window.profile_delete.isEnabled())
+        self.window._set_singing_volume(55)
+        self.window._switch_profile('default')
+        self.assertEqual(self.window.sing_volume.value(), 33)
+        self.assertEqual(self.window.queue.count(), 1)
+        self.assertFalse(self.window.profile_delete.isEnabled())
+        self.window._switch_profile('Guest')
+        self.assertEqual(self.window.sing_volume.value(), 55)
+        with patch('app.consumer.QMessageBox.question', return_value=QMessageBox.StandardButton.Yes):
+            self.window._delete_profile()
+        self.assertEqual(self.window.profiles.active, 'default')
+        self.assertEqual(self.window.profiles.names(), ['default'])
+
+    def test_profile_switch_is_refused_while_singing(self):
+        self.window.playing_item = object()
+        self.window._switch_profile('Guest')
+        self.assertEqual(self.window.profiles.active, 'default')
+        self.window.playing_item = None
+
     def test_monitor_failure_does_not_overwrite_desired_preference(self):
         view = self.karaoke_fixture()
         self.window.microphone.set_monitor.side_effect = [RuntimeError('unsupported'), None]

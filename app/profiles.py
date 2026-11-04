@@ -71,6 +71,20 @@ class ProfileStore:
     def path(self, filename: str) -> Path:
         return self.root / self.active / filename
 
+    def names(self) -> list[str]:
+        folders = self.root.iterdir() if self.root.is_dir() else []
+        return sorted((p.name for p in folders if (p / 'profile.json').is_file()), key=str.casefold)
+
+    def switch(self, name: str) -> str:
+        self.active = profile_name(name)
+        self.ensure(self.active)
+        return self.active
+
+    def delete(self, name: str) -> None:
+        if name in (DEFAULT_PROFILE, self.active):
+            raise ValueError(name)
+        shutil.rmtree(self.root / name)
+
     def ensure(self, name: str) -> None:
         folder = self.root / name
         if (folder / 'profile.json').is_file():

@@ -15,7 +15,7 @@ from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtMultimedia import QtAudio, QAudioFormat, QAudioOutput, QAudioSink, QMediaDevices, QMediaPlayer
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QFileDialog,
-                               QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                               QFormLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSlider, QSpinBox,
                                QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
                                QAbstractItemView, QSizePolicy)
@@ -42,7 +42,7 @@ from app.batch_lyrics import LyricsLookup, has_lrclib
 from app.ui_icons import icon
 from app.application_identity import application_icon, configure_process_identity
 from app.audio_preferences import load_preferences
-from app.profiles import ProfileStore, content_key, variant_key
+from app.profiles import DEFAULT_PROFILE, ProfileStore, content_key, profile_name, variant_key
 from app.song_images import selected_thumbnail
 from app.image_search import ImageSearchRegistry
 
@@ -219,6 +219,20 @@ class ConsumerWindow(QMainWindow):
         language_panel = QWidget(tabs)
         language_layout = QHBoxLayout(language_panel)
         language_layout.setContentsMargins(8, 0, 12, 0)
+        language_layout.addWidget(QLabel(t('個人設定檔')))
+        self.profile_box = QComboBox()
+        self.profile_box.setAccessibleName(t('個人設定檔'))
+        language_layout.addWidget(self.profile_box)
+        self.profile_new = QPushButton('＋')
+        self.profile_delete = QPushButton('－')
+        for button, tip, action in ((self.profile_new, t('新增個人設定檔'), self._new_profile),
+                                    (self.profile_delete, t('刪除目前的個人設定檔'), self._delete_profile)):
+            button.setFixedWidth(34)
+            button.setToolTip(tip)
+            button.setAccessibleName(tip)
+            button.clicked.connect(lambda _=False, run=action: run())
+            language_layout.addWidget(button)
+        language_layout.addSpacing(12)
         language_layout.addWidget(QLabel(t('介面語言')))
         self.ui_language = QComboBox()
         for label, code in LANGUAGES:
@@ -229,6 +243,8 @@ class ConsumerWindow(QMainWindow):
         language_layout.addWidget(self.ui_language)
         tabs.setCornerWidget(language_panel, Qt.Corner.TopRightCorner)
         self.ui_language.currentIndexChanged.connect(self._language_changed)
+        self.profile_box.currentIndexChanged.connect(lambda *_: self._switch_profile(self.profile_box.currentData()))
+        self._refresh_profile_box()
         self._build_sing_page()
         self._build_process_page()
         self._build_settings_page()
@@ -774,6 +790,60 @@ class ConsumerWindow(QMainWindow):
             sink.deleteLater()
             buffer.close()
             buffer.deleteLater()
+
+    def _refresh_profile_box(self):
+        self.profile_box.blockSignals(True)
+        self.profile_box.clear()
+        for name in self.profiles.names():
+            self.profile_box.addItem(name, name)
+        self.profile_box.setCurrentIndex(self.profile_box.findData(self.profiles.active))
+        self.profile_box.blockSignals(False)
+        self.profile_delete.setEnabled(self.profiles.active != DEFAULT_PROFILE)
+
+    def _switch_profile(self, name):
+        name = profile_name(name)
+        if name != self.profiles.active:
+            if self.playing_item is not None:
+                QMessageBox.information(self, t('個人設定檔'), t('請先停止播放，再切換個人設定檔。'))
+            else:
+                self.flush_audio_preferences()
+                self._save_last_queue()
+                self.profiles.switch(name)
+                self.settings['active_profile'] = name
+                try:
+                    save_settings(self.settings)
+                except OSError as error:
+                    QMessageBox.warning(self, t('儲存失敗'), str(error))
+                self.audio_preferences = load_preferences(
+                    {'singing_preferences': self.profiles.read('preferences.json', {})})
+                prefs = self.audio_preferences
+                self._set_singing_volume(prefs['music_volume'])
+                self._set_guide_volume(prefs['guide_volume'])
+                self._set_monitor_volume(prefs['monitor_volume'])
+                self.microphone.monitor_enabled = prefs['monitor_enabled']
+                if self.karaoke_window is not None:  # rebuilt on next play with the new profile's values
+                    self.karaoke_window.close()
+                    self.karaoke_window.deleteLater()
+                    self.karaoke_window = None
+                self.queue.clear()
+                self._restore_last_queue()
+                self.refresh_tree()
+        self._refresh_profile_box()
+
+    def _new_profile(self):
+        name, accepted = QInputDialog.getText(self, t('新增個人設定檔'), t('個人設定檔名稱'))
+        if accepted and name.strip():
+            self._switch_profile(name)
+
+    def _delete_profile(self):
+        name = self.profiles.active
+        if name == DEFAULT_PROFILE or self.playing_item is not None:
+            return
+        if QMessageBox.question(self, t('個人設定檔'), t('刪除個人設定檔「{p0}」？歌單與最佳設定會被刪除，錄音檔仍保留在磁碟上。', p0=name))                 != QMessageBox.StandardButton.Yes:
+            return
+        self._switch_profile(DEFAULT_PROFILE)
+        self.profiles.delete(name)
+        self._refresh_profile_box()
 
     def _language_changed(self, *_):
         previous = self.settings.get('ui_language', language())
@@ -1458,10 +1528,7 @@ class ConsumerWindow(QMainWindow):
             return
         self._closing = True
         self.flush_audio_preferences()
-        try:
-            save_playlist(self.profiles.path("last_playlist.json"), self.queue_items())
-        except Exception as error:
-            QMessageBox.warning(self, t('無法保存上次歌單'), str(error))
+        self._save_last_queue()
         self.lyric_lookup.cancel()
         self.pending_ops.clear()
         self.jobs.cancel()
@@ -1633,6 +1700,12 @@ class ConsumerWindow(QMainWindow):
                 self.now_playing.setText(t('歌單已儲存：{p0}', p0=path))
             except Exception as error:
                 QMessageBox.warning(self, t('儲存失敗'), str(error))
+
+    def _save_last_queue(self):
+        try:
+            save_playlist(self.profiles.path("last_playlist.json"), self.queue_items())
+        except Exception as error:
+            QMessageBox.warning(self, t('無法保存上次歌單'), str(error))
 
     def _restore_last_queue(self):
         path = self.profiles.path("last_playlist.json")
