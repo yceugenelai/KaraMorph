@@ -576,6 +576,30 @@ class ConsumerUiTests(unittest.TestCase):
         self.assertEqual(self.window.profiles.active, 'default')
         self.assertEqual(self.window.profiles.names(), ['default'])
 
+    def test_profile_export_and_import_from_settings(self):
+        self.populate(1)
+        self.settings['source_dir'] = str(self.root)
+        self.window._set_singing_volume(33)
+        self.window._append_queue(dict(song_id='s0', variant_id='original', label='Song 0'))
+        target = self.root / 'mine.zip'
+        with patch('app.consumer.QFileDialog.getSaveFileName', return_value=(str(target), '')):
+            self.window._export_profile(False)
+        self.assertTrue(target.is_file())
+        with patch('app.consumer.QFileDialog.getOpenFileName', return_value=(str(target), '')),                 patch('app.consumer.QInputDialog.getText', return_value=('Friend', True)):
+            self.window._import_profile()
+        self.assertEqual(self.window.profiles.active, 'Friend')
+        self.assertEqual(self.window.sing_volume.value(), 33)
+        self.assertEqual(self.window.queue.count(), 1)
+        self.assertEqual(self.window.profile_box.currentData(), 'Friend')
+
+    def test_profile_import_rejects_non_archives(self):
+        bad = self.root / 'bad.zip'
+        bad.write_bytes(b'nope')
+        with patch('app.consumer.QFileDialog.getOpenFileName', return_value=(str(bad), '')),                 patch('app.consumer.QMessageBox.warning') as warning:
+            self.window._import_profile()
+        warning.assert_called_once()
+        self.assertEqual(self.window.profiles.active, 'default')
+
     def test_profile_switch_is_refused_while_singing(self):
         self.window.playing_item = object()
         self.window._switch_profile('Guest')

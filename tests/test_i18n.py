@@ -25,7 +25,7 @@ class TranslationTests(unittest.TestCase):
                 self.assertEqual(fields(source), fields(catalog[source]), source)
         for name in ('consumer', 'karaoke_window', 'lyrics_dialog', 'lyrics', 'batch_lyrics',
                      'style_execution', 'karaoke_assets', 'models_dialog', 'image_assets_widget',
-                     'image_receiver', 'browser_images'):
+                     'image_receiver', 'browser_images', 'profile_bundle'):
             for node in ast.walk(ast.parse((root / f'{name}.py').read_text(encoding='utf-8'))):
                 if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 't'
                         and node.args and isinstance(node.args[0], ast.Constant)):

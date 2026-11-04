@@ -27,7 +27,7 @@ Can't find the song you want in the karaoke catalog? Want to hear a familiar son
 - **Backgrounds**: keywords are generated automatically to search for background images while you sing; simple drag and drop assigns a background to each song.
 - **Live adjustment**: change speed (0.7–1.3×) and key (±6 semitones) while singing, and remember your best setting for each song.
 - **Playlists and recording**: build your own singing playlist and record your performance with a microphone.
-- **Profiles**: add or switch profiles at the top right, so each person (or purpose) keeps their own volume preferences, playlist, best settings and recordings.
+- **Profiles**: add or switch profiles at the top right (and move them to another computer as a ZIP), so each person (or purpose) keeps their own volume preferences, playlist, best settings and recordings.
 
 ## Tested environment
 
@@ -100,16 +100,13 @@ Settings, playlists, logs and caches live in `.app_data/`; models in `models/`; 
 
 ### Moving user data
 
-You can change the application folder, but **copying music and outputs to different paths does not reliably preserve links to existing versions, recordings and playlists**. Song IDs include the original audio's full path, size and modification time; generated audio also uses absolute paths.
+To move a profile to another computer (or to a new version), use **Settings → Move profile**. Both exports are a single ZIP:
 
-For a freshly extracted version on the same PC, keep the existing data locations:
+- **Export settings**: volume preferences, playlist and best speed/key settings only. Songs are matched by content, so it applies wherever the same song exists; playlist entries without a match are skipped.
+- **Export everything (with music)**: also includes the music files, processed results, lyrics and image assets, this profile's recordings and the shared backgrounds. On import, music goes into that computer's music folder (set it first) and paths and the playlist are remapped automatically, recreating the same environment. The file can be very large; use it only to move to your own computer.
+- You can rename the profile on import; an existing profile of the same name is overwritten after confirmation.
 
-1. Close both versions and back up your data. Keep the original music folder and the entire output folder (default: `outputs/`).
-2. Copy the old `.app_data/settings.json` and the whole `profiles/` folder into the new application's `.app_data/`, if present. Copy `logs/` if you want diagnostic history, and keep any separately saved playlist JSON files. Models, Python environments, caches and `model-receipts.json` are not needed.
-3. Open the new app. In Settings, select the **original full paths** for the music and output folders, save settings, then click Reload songs.
-4. Check originals, generated versions, recordings and playlists before removing old application files.
-
-On another PC, use the same drive letters and full data paths, and preserve original audio filenames, contents and modification times. There is currently no automatic migration tool; keep your backup.
+Song identity includes the full path, so do not move by copying the music or output folders by hand; versions, recordings and playlists may lose their links.
 
 ### Build the lightweight ZIP
 

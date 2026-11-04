@@ -541,5 +541,20 @@
   "個人設定檔名稱": "Profile name",
   "刪除目前的個人設定檔": "Delete current profile",
   "請先停止播放，再切換個人設定檔。": "Stop playback before switching profiles.",
-  "刪除個人設定檔「{p0}」？歌單與最佳設定會被刪除，錄音檔仍保留在磁碟上。": "Delete profile \"{p0}\"? Its playlist and best settings are removed; recordings stay on disk."
+  "刪除個人設定檔「{p0}」？歌單與最佳設定會被刪除，錄音檔仍保留在磁碟上。": "Delete profile \"{p0}\"? Its playlist and best settings are removed; recordings stay on disk.",
+  "個人設定檔搬移": "Move profile",
+  "匯出設定…": "Export settings…",
+  "匯出全部（含音樂）…": "Export everything (with music)…",
+  "匯入…": "Import…",
+  "已取消。": "Cancelled.",
+  "匯出個人設定檔": "Export profile",
+  "匯入個人設定檔": "Import profile",
+  "全部打包會包含音樂檔與所有歌曲的處理結果，檔案可能很大，且音樂可能受著作權保護；請只用於轉移到自己的電腦。要繼續嗎？": "Exporting everything includes the music files and all processed results. The file can be very large and the music may be copyrighted; use it only to move to your own computer. Continue?",
+  "ZIP 封存檔 (*.zip)": "ZIP archive (*.zip)",
+  "已匯出：{p0}": "Exported: {p0}",
+  "個人設定檔「{p0}」已存在，要覆蓋它的歌單與最佳設定嗎？": "Profile \"{p0}\" already exists. Overwrite its playlist and best settings?",
+  "已匯入個人設定檔「{p0}」：歌曲 {p1} 首（其中 {p2} 首已存在而保留），歌單有 {p3} 首找不到對應歌曲而略過。": "Imported profile \"{p0}\": {p1} songs ({p2} already existed and were kept); {p3} playlist entries were skipped because no matching song was found.",
+  "不是 KaraMorph 個人設定檔封存檔。": "This is not a KaraMorph profile archive.",
+  "封存檔內容不安全。": "The archive contains unsafe paths.",
+  "請先在設定中選擇音樂資料夾。": "Choose a music folder in Settings first."
 }

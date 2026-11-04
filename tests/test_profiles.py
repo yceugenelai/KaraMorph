@@ -67,8 +67,12 @@ class ProfileStoreTests(unittest.TestCase):
     def test_names_and_variant_keys(self):
         self.assertEqual(profile_name('../evil'), 'evil')
         self.assertEqual(profile_name('  '), DEFAULT_PROFILE)
-        self.assertEqual(variant_key('instrumental', None, 1, 0), 'instrumental')
-        self.assertEqual(variant_key('abc', {'style_label': 'Jazz'}, 1.0, 2), 'Jazz|1.000|+2')
+        self.assertEqual(variant_key('instrumental', []), 'instrumental')
+        styled = {'id': 'a', 'style_label': 'Jazz'}
+        shifted = {'id': 'b', 'kind': 'fx', 'source_id': 'a', 'speed': 0.9, 'semitones': 2}
+        self.assertEqual(variant_key('a', [styled]), 'Jazz|1.000|+0')
+        self.assertEqual(variant_key('b', [styled, shifted]), 'fx|0.900|+2')
+        self.assertEqual(variant_key('gone', [styled]), 'gone')
 
     def test_recordings_are_filtered_by_profile_and_legacy_belong_to_default(self):
         for session, profile in (('a', None), ('b', 'guest')):
