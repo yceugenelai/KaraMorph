@@ -11,7 +11,8 @@ def recordings_dir(workspace: Path, song_id: str) -> Path:
     return song_dir(workspace, song_id) / "recordings"
 
 
-def load_recordings(workspace: Path, song_id: str) -> list[dict]:
+def load_recordings(workspace: Path, song_id: str, profile: str | None = None) -> list[dict]:
+    """Takes recorded before profiles existed belong to the default profile."""
     root = recordings_dir(workspace, song_id)
     if not root.is_dir():
         return []
@@ -25,6 +26,8 @@ def load_recordings(workspace: Path, song_id: str) -> list[dict]:
         try:
             row = json.loads(metadata.read_text(encoding="utf-8"))
             if row.get("song_id") != song_id or row.get("session_id") != folder.name:
+                continue
+            if profile is not None and row.get("profile", "default") != profile:
                 continue
             played_backing = folder / 'played_backing.wav'
             extra = ({'played_backing_path': str(played_backing)} if

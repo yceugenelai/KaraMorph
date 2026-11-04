@@ -131,7 +131,7 @@ class MicrophoneService(QObject):
             self.monitor.setVolume(self.monitor_volume)
 
     def start_recording(self, workspace: Path, song_id: str, variant_id: str, backing_path: Path,
-                        playback_offset_ms=0):
+                        playback_offset_ms=0, profile="default"):
         if not self.source or not self.format or self.is_recording:
             raise RuntimeError("麥克風尚未啟動或已在錄音")
         self._drain()
@@ -156,7 +156,7 @@ class MicrophoneService(QObject):
             self.exclusive_player.capture_enabled = True
         self.record_frames = 0
         self.record_metadata = {
-            "session_id": session_id, "song_id": song_id, "variant_id": variant_id,
+            "session_id": session_id, "song_id": song_id, "variant_id": variant_id, "profile": profile,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "sample_rate": self.format.sampleRate(), "channels": 1,
             "input_device": self.device.description(),

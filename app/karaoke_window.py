@@ -298,6 +298,12 @@ class KaraokeWindow(QWidget):
         self.live_key.setFixedWidth(100)
         self.live_key.setAccessibleName(t('升降 Key（半音）'))
         effect_bar.addWidget(self.live_key)
+        self.best_button = self._icon_button('star', t('儲存為我的最佳'), self._best_clicked)
+        self.best_button.setFixedSize(32, 32)
+        self.original_button = QPushButton(t('原始'))
+        self.original_button.clicked.connect(lambda: self.reset_live_effects())
+        effect_bar.addWidget(self.best_button)
+        effect_bar.addWidget(self.original_button)
         bar.addWidget(self.bottom_effects)
         bar.addStretch()
         music = QLabel()
@@ -338,7 +344,16 @@ class KaraokeWindow(QWidget):
         reset_effects = QPushButton(t('重設播放速度／Key'))
         reset_effects.clicked.connect(lambda: self.reset_live_effects())
         effects_layout.addWidget(reset_effects)
-        effects_note = QLabel(t('只調整歌曲與導唱；麥克風維持原聲。每首歌重新開始為 1.0×／0 半音。'))
+        self.best_status = QLabel()
+        effects_layout.addWidget(self.best_status)
+        self.apply_best_button = QPushButton(t('套用我的最佳'))
+        self.apply_best_button.clicked.connect(lambda: self._apply_best())
+        effects_layout.addWidget(self.apply_best_button)
+        self.clear_best_button = QPushButton(t('清除已存設定'))
+        self.clear_best_button.clicked.connect(lambda: self.controller.clear_best_effects())
+        effects_layout.addWidget(self.clear_best_button)
+        self.set_best_state(None, False)
+        effects_note = QLabel(t('只調整歌曲與導唱；麥克風維持原聲。有存過最佳設定的歌會自動套用，否則從 1.0×／0 半音開始。'))
         effects_note.setWordWrap(True)
         effects_note.setMaximumWidth(280)
         effects_layout.addWidget(effects_note)
@@ -644,6 +659,7 @@ class KaraokeWindow(QWidget):
 
     def _sync_effect_buttons(self):
         self.bottom_speed_label.setText(f'{self.live_speed.value()/100:.2f}×')
+        self._refresh_best_button()
         self.speed_down.setEnabled(self.live_speed.value() > self.live_speed.minimum())
         self.speed_up.setEnabled(self.live_speed.value() < self.live_speed.maximum())
 
@@ -655,6 +671,49 @@ class KaraokeWindow(QWidget):
             QMessageBox.warning(self, t('播放調整失敗'), str(error))
             settings = getattr(self.controller.player, 'effects', (1., 0))
             self.reset_live_effects(apply=False, settings=settings)
+
+    def set_best_state(self, saved, can_save):
+        """saved is this profile's (speed, key) for the playing version, or None."""
+        self.best_status.setText(t('我的最佳：{p0:.2f}×，Key {p1:+d}', p0=saved[0], p1=saved[1]) if saved
+                                 else t('尚未儲存最佳設定'))
+        self.apply_best_button.setEnabled(saved is not None)
+        self.clear_best_button.setEnabled(saved is not None)
+        self._best_saved, self._best_can_save = saved, can_save
+        self._refresh_best_button()
+
+    def _best_matches_current(self):
+        saved = self._best_saved
+        return bool(saved) and round(saved[0] * 100) == self.live_speed.value() and saved[1] == self.live_key.value()
+
+    def _at_original(self):
+        return self.live_speed.value() == 100 and self.live_key.value() == 0
+
+    def _refresh_best_button(self):
+        """One star: empty = save, filled = already best, marked = current values differ (click updates)."""
+        saved = self._best_saved
+        if saved is None:
+            name, tip = 'star', t('儲存為我的最佳')
+        elif self._best_matches_current():
+            name, tip = 'star_on', t('已是我的最佳：{p0:.2f}×，Key {p1:+d}', p0=saved[0], p1=saved[1])
+        elif self._at_original():
+            name, tip = 'star_swap', t('切換到我的最佳（{p0:.2f}×，Key {p1:+d}）', p0=saved[0], p1=saved[1])
+        else:
+            name, tip = 'star_edit', t('更新我的最佳（目前已存 {p0:.2f}×，Key {p1:+d}）', p0=saved[0], p1=saved[1])
+        self.best_button.setIcon(icon(name))
+        self.best_button.setToolTip(tip)
+        self.best_button.setAccessibleName(tip)
+        self.best_button.setEnabled(self._best_can_save)
+
+    def _best_clicked(self):
+        if self._best_saved is not None and not self._best_matches_current() and self._at_original():
+            self._apply_best()  # toggle back from original; never overwrite the saved value
+        elif self._best_saved is None or not self._best_matches_current():
+            self.controller.save_best_effects(self.live_speed.value() / 100, self.live_key.value())
+
+    def _apply_best(self):
+        saved = self.controller.saved_effects()
+        if saved:
+            self.reset_live_effects(settings=saved)
 
     def reset_live_effects(self, apply=True, settings=(1., 0)):
         self.effects_timer.stop()

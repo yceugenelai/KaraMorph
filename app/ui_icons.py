@@ -5,6 +5,8 @@ from PySide6.QtCore import QByteArray
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
+STAR = 'M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z'
+
 PATHS = {
     'play': '<path d="M8 4l13 8-13 8z"/>',
     'pause': '<path d="M8 5v14M16 5v14"/>',
@@ -19,6 +21,10 @@ PATHS = {
     'record_ready': '<circle cx="12" cy="12" r="7"/><path d="M7 12l3 3 6-6"/>',
     'recording': '<circle cx="12" cy="12" r="7" fill="{color}"/>',
     'more': '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    'star': f'<path d="{STAR}"/>',
+    'star_on': f'<path d="{STAR}" fill="{{color}}"/>',
+    'star_edit': f'<path d="{STAR}" fill="{{color}}"/><circle cx="20" cy="4" r="2.5" fill="{{color}}"/>',
+    'star_swap': f'<path d="M12 3L9.3 8.6l-6.1.9 4.4 4.3-1 6.1L12 17z" fill="{{color}}"/><path d="{STAR}"/>',
     'fullscreen': '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
     'restore': '<path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/>',
 }

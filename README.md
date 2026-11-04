@@ -25,7 +25,7 @@ Can't find the song you want in the karaoke catalog? Want to hear a familiar son
 - **AI re-arrangement**: turn the same song into a different style (for example, lounge jazz).
 - **Lyrics**: search lyrics automatically, or type or paste your own.
 - **Backgrounds**: keywords are generated automatically to search for background images while you sing; simple drag and drop assigns a background to each song.
-- **Live adjustment**: change speed (0.7–1.3×) and key (±6 semitones) while singing.
+- **Live adjustment**: change speed (0.7–1.3×) and key (±6 semitones) while singing, and remember your best setting for each song.
 - **Playlists and recording**: build your own singing playlist and record your performance with a microphone.
 
 ## Tested environment
@@ -89,7 +89,7 @@ NVIDIA CUDA is preferred for AI processing. Long tracks or insufficient VRAM can
 
 ### Playback speed and key
 
-Speed −/+ buttons change it by 0.1×; **More settings → Playback speed / key** retains the slider for fine adjustments and a reset button for speed and key. Changes affect the current music version and guide vocals; microphone monitoring and dry recordings stay unchanged. Each song starts with neutral settings, and lyrics follow its source position. Whole-song recordings additionally save the backing actually played as a WAV for synchronized preview, using extra disk space. Both shared and exclusive playback support this feature; it does not create a new song version.
+Speed −/+ buttons change it by 0.1×; **More settings → Playback speed / key** retains the slider for fine adjustments and a reset button for speed and key. Changes affect the current music version and guide vocals; microphone monitoring and dry recordings stay unchanged. Each song starts at 1.0× / key 0 unless you click the star button, which remembers the current speed and key for that song and applies them automatically next time; the **Original** button returns to neutral at any time. Best settings, like the playlist, volume preferences and recordings, belong to your profile (`.app_data/profiles/<name>/`, currently `default`) and are matched by song content, so they survive moving files. Lyrics follow its source position. Whole-song recordings additionally save the backing actually played as a WAV for synchronized preview, using extra disk space. Both shared and exclusive playback support this feature; it does not create a new song version.
 
 ### Song library and data locations
 
@@ -104,7 +104,7 @@ You can change the application folder, but **copying music and outputs to differ
 For a freshly extracted version on the same PC, keep the existing data locations:
 
 1. Close both versions and back up your data. Keep the original music folder and the entire output folder (default: `outputs/`).
-2. Copy the old `.app_data/settings.json` and `last_playlist.json` into the new application's `.app_data/`, if present. Copy `logs/` if you want diagnostic history, and keep any separately saved playlist JSON files. Models, Python environments, caches and `model-receipts.json` are not needed.
+2. Copy the old `.app_data/settings.json` and the whole `profiles/` folder into the new application's `.app_data/`, if present. Copy `logs/` if you want diagnostic history, and keep any separately saved playlist JSON files. Models, Python environments, caches and `model-receipts.json` are not needed.
 3. Open the new app. In Settings, select the **original full paths** for the music and output folders, save settings, then click Reload songs.
 4. Check originals, generated versions, recordings and playlists before removing old application files.
 

@@ -297,17 +297,17 @@ class ConsumerUiTests(unittest.TestCase):
 
     def test_resume_playlist_duplicates_missing_and_empty(self):
         items = [dict(song_id='missing', variant_id='fx', label='Jazz')] * 2
-        save_playlist(self.root / 'last_playlist.json', items)
+        save_playlist(self.root / 'profiles' / 'default' / 'last_playlist.json', items)
         self.window._restore_last_queue()
         self.assertEqual(self.window.queue_items(), items)
         self.assertIn('無法使用', self.window.queue.item(0).text())
         self.assertIsNone(self.window.playing_item)
         self.window.close()
-        self.assertEqual(load_playlist(self.root / 'last_playlist.json'), items)
+        self.assertEqual(load_playlist(self.root / 'profiles' / 'default' / 'last_playlist.json'), items)
         self.window.queue.clear()
         self.window.show()
         self.window.close()
-        self.assertEqual(load_playlist(self.root / 'last_playlist.json'), [])
+        self.assertEqual(load_playlist(self.root / 'profiles' / 'default' / 'last_playlist.json'), [])
 
     def test_match_preserves_manual_and_marks_download(self):
         song = dict(id='song', title='KING', artist='Singer', duration_sec=100)
@@ -507,7 +507,7 @@ class ConsumerUiTests(unittest.TestCase):
         self.window.close()
         expected = dict(guide_enabled=True, monitor_enabled=False,
                         music_volume=63, guide_volume=21, monitor_volume=37)
-        self.assertEqual(self.settings['singing_preferences'], expected)
+        self.assertEqual(json.loads((self.root / 'profiles' / 'default' / 'preferences.json').read_text(encoding='utf-8')), expected)
         other = ConsumerWindow()
         try:
             self.assertEqual(other.audio_preferences, expected)
@@ -519,6 +519,40 @@ class ConsumerUiTests(unittest.TestCase):
             other.close()
             other.deleteLater()
 
+    def test_best_speed_key_is_saved_per_song_and_applied_on_play(self):
+        self.populate(1)
+        view = self.karaoke_fixture()
+        self.window._append_queue(dict(song_id='s0', variant_id='original', label='Song 0'))
+        self.window._play_from(0)
+        self.assertEqual((view.live_speed.value(), view.live_key.value()), (100, 0))
+        self.assertFalse(view.apply_best_button.isEnabled())
+        self.assertEqual(view.best_button.toolTip(), '儲存為我的最佳')
+        view.live_speed.setValue(110)
+        view.live_key.setValue(2)
+        view.best_button.click()
+        self.assertTrue(view.apply_best_button.isEnabled())
+        self.assertIn('1.10', view.best_status.text())
+        self.assertIn('已是我的最佳', view.best_button.toolTip())
+        view.live_key.setValue(3)
+        self.assertIn('更新我的最佳', view.best_button.toolTip())
+        view.original_button.click()
+        self.assertEqual((view.live_speed.value(), view.live_key.value()), (100, 0))
+        self.assertIn('切換到我的最佳', view.best_button.toolTip())
+        view.best_button.click()
+        self.assertEqual((view.live_speed.value(), view.live_key.value()), (110, 2))
+        view.original_button.click()
+        view.apply_best_button.click()
+        self.assertEqual((view.live_speed.value(), view.live_key.value()), (110, 2))
+        view.original_button.click()
+        self.window._play_from(0)
+        self.assertEqual((view.live_speed.value(), view.live_key.value()), (110, 2))
+        view.clear_best_button.click()
+        self.assertFalse(view.apply_best_button.isEnabled())
+        self.assertEqual(view.best_button.toolTip(), '儲存為我的最佳')
+        self.window._play_from(0)
+        self.assertEqual((view.live_speed.value(), view.live_key.value()), (100, 0))
+        view.close()
+
     def test_monitor_failure_does_not_overwrite_desired_preference(self):
         view = self.karaoke_fixture()
         self.window.microphone.set_monitor.side_effect = [RuntimeError('unsupported'), None]
@@ -529,16 +563,15 @@ class ConsumerUiTests(unittest.TestCase):
         view.close()
 
     def test_volume_changes_are_saved_automatically_without_closing(self):
-        with patch('app.consumer.save_settings') as save:
-            self.window._set_singing_volume(50)
-            self.window._set_singing_volume(61)
-            self.window._set_guide_volume(20)
-            save.assert_not_called()
-            QTest.qWait(350)
-            save.assert_called_once()
-            prefs = save.call_args.args[0]['singing_preferences']
-            self.assertEqual(prefs['music_volume'], 61)
-            self.assertEqual(prefs['guide_volume'], 20)
+        path = self.root / 'profiles' / 'default' / 'preferences.json'
+        self.window._set_singing_volume(50)
+        self.window._set_singing_volume(61)
+        self.window._set_guide_volume(20)
+        self.assertFalse(path.exists())
+        QTest.qWait(350)
+        prefs = json.loads(path.read_text(encoding='utf-8'))
+        self.assertEqual(prefs['music_volume'], 61)
+        self.assertEqual(prefs['guide_volume'], 20)
 
     def test_custom_thumbnail_reappears_after_library_reload(self):
         from PySide6.QtGui import QImage, QColor

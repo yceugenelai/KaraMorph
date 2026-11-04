@@ -42,6 +42,7 @@ from app.batch_lyrics import LyricsLookup, has_lrclib
 from app.ui_icons import icon
 from app.application_identity import application_icon, configure_process_identity
 from app.audio_preferences import load_preferences
+from app.profiles import ProfileStore, content_key, variant_key
 from app.song_images import selected_thumbnail
 from app.image_search import ImageSearchRegistry
 
@@ -135,7 +136,10 @@ class ConsumerWindow(QMainWindow):
         self.setWindowIcon(application_icon())
         self.resize(1160, 760)
         self.settings = load_settings()
-        self.audio_preferences = load_preferences(self.settings)
+        self.profiles = ProfileStore(data_dir(), self.settings.get('active_profile'),
+                                     legacy_preferences=self.settings.get('singing_preferences'))
+        self.audio_preferences = load_preferences({'singing_preferences': self.profiles.read('preferences.json', {})})
+        self.playing_pref = None
         self.image_search_registry = ImageSearchRegistry()
         self.preferences_timer = QTimer(self)
         self.preferences_timer.setSingleShot(True)
@@ -378,9 +382,8 @@ class ConsumerWindow(QMainWindow):
 
     def flush_audio_preferences(self):
         self.preferences_timer.stop()
-        self.settings['singing_preferences'] = dict(self.audio_preferences)
         try:
-            save_settings(self.settings)
+            self.profiles.write('preferences.json', dict(self.audio_preferences))
         except OSError as error:
             QMessageBox.warning(self, t('無法保存音訊偏好'), str(error))
 
@@ -921,7 +924,7 @@ class ConsumerWindow(QMainWindow):
             variants_by_id = {item["id"]: item for item in catalog.get("variants", [])}
             for variant in catalog.get("variants", []):
                 self._add_version(root, song, variant["id"], version_label(variant, variants_by_id), Path(variant["audio_path"]))
-            recordings = load_recordings(self.workspace, song_id)
+            recordings = load_recordings(self.workspace, song_id, self.profiles.active)
             if recordings:
                 group = QTreeWidgetItem(root, [t('錄音 ({p0})', p0=len(recordings)), "", "—", "", "", ""])
                 group.setData(0, Qt.ItemDataRole.UserRole, ("recordings", song_id))
@@ -1324,13 +1327,16 @@ class ConsumerWindow(QMainWindow):
                 self.playing_item = self.queue.item(index)
                 self.now_playing.setText(t('正在播放  {p0}', p0=self.queue_display_label(item)))
                 self.player.setSource(QUrl.fromLocalFile(str(path)))
+                self.playing_pref = self._pref_ids(item)
+                start_effects = self.saved_effects() or (1., 0)
                 if self.player in (self.exclusive_player, self.shared_player):
-                    self.player.set_effects(1., 0)
+                    self.player.set_effects(*start_effects)
                     guide = self._preview_paths(item['song_id'], item['variant_id'])[1] if item['variant_id'] != 'original' else None
                     self.player.set_guide(guide)
                     self.player.guide_enabled = bool(guide and self.audio_preferences['guide_enabled'])
                 if self.karaoke_window:
-                    self.karaoke_window.reset_live_effects(apply=False)
+                    self.karaoke_window.reset_live_effects(apply=False, settings=start_effects)
+                    self.karaoke_window.set_best_state(self.saved_effects(), self.playing_pref is not None)
                 try:
                     self.player.play()
                 except Exception as error:
@@ -1340,7 +1346,8 @@ class ConsumerWindow(QMainWindow):
                 self.record_checkbox.setEnabled(False)
                 if self.record_checkbox.isChecked() and self.microphone.source:
                     try:
-                        self.microphone.start_recording(self.workspace, item["song_id"], item["variant_id"], path)
+                        self.microphone.start_recording(self.workspace, item["song_id"], item["variant_id"], path,
+                                                        profile=self.profiles.active)
                     except Exception as error:
                         QMessageBox.warning(self, t('錄音失敗'), str(error))
                 if self.karaoke_window and self.karaoke_window.isVisible():
@@ -1452,7 +1459,7 @@ class ConsumerWindow(QMainWindow):
         self._closing = True
         self.flush_audio_preferences()
         try:
-            save_playlist(data_dir() / "last_playlist.json", self.queue_items())
+            save_playlist(self.profiles.path("last_playlist.json"), self.queue_items())
         except Exception as error:
             QMessageBox.warning(self, t('無法保存上次歌單'), str(error))
         self.lyric_lookup.cancel()
@@ -1559,6 +1566,40 @@ class ConsumerWindow(QMainWindow):
         self.record_checkbox.setEnabled(True)
         self.now_playing.setText(t('已停止播放'))
 
+    def _pref_ids(self, item):
+        song = self.song_map.get(item["song_id"])
+        try:
+            ckey = content_key(Path(song["path"]))
+        except (OSError, TypeError, KeyError):
+            return None
+        vkey = item["variant_id"]
+        variants = {row["id"]: row for row in load_catalog(self.workspace, item["song_id"]).get("variants", [])}
+        if vkey in variants:
+            speed, semitones = _effective_adjustments(variants[vkey], variants)
+            vkey = variant_key(vkey, variants[vkey], speed, semitones)
+        return ckey, vkey, song.get("title", "")
+
+    def saved_effects(self):
+        """This profile's best (speed, key) for the playing version, or None."""
+        if self.playing_item is None or not self.playing_pref:
+            return None
+        return self.profiles.best_for(*self.playing_pref[:2])
+
+    def save_best_effects(self, speed, key):
+        self._update_best(lambda ckey, vkey, title: self.profiles.save_best(ckey, vkey, title, speed, key))
+
+    def clear_best_effects(self):
+        self._update_best(lambda ckey, vkey, title: self.profiles.clear_best(ckey, vkey))
+
+    def _update_best(self, change):
+        if self.playing_item is None or not self.playing_pref:
+            return
+        try:
+            change(*self.playing_pref)
+        except OSError as error:
+            QMessageBox.warning(self, t('無法保存最佳設定'), str(error))
+        self.karaoke_window.set_best_state(self.saved_effects(), True)
+
     def set_live_effects(self, tempo, key):
         self.player.set_effects(tempo, key) if self.player in (self.exclusive_player, self.shared_player) else None
 
@@ -1594,7 +1635,7 @@ class ConsumerWindow(QMainWindow):
                 QMessageBox.warning(self, t('儲存失敗'), str(error))
 
     def _restore_last_queue(self):
-        path = data_dir() / "last_playlist.json"
+        path = self.profiles.path("last_playlist.json")
         if not path.is_file():
             return
         try:
@@ -1772,7 +1813,7 @@ class ConsumerWindow(QMainWindow):
         self._update_preview_progress()
 
     def preview_recording(self, song_id, session_id):
-        row = next((entry for entry in load_recordings(self.workspace, song_id)
+        row = next((entry for entry in load_recordings(self.workspace, song_id, self.profiles.active)
                     if entry["session_id"] == session_id), None)
         if not row:
             QMessageBox.warning(self, t('試聽失敗'), t('錄音檔案不存在'))
