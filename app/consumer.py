@@ -16,7 +16,7 @@ from PySide6.QtMultimedia import QtAudio, QAudioFormat, QAudioOutput, QAudioSink
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QFileDialog,
                                QFormLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
-                               QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSlider, QSpinBox,
+                               QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QProgressDialog, QPushButton, QSlider, QSpinBox,
                                QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
                                QAbstractItemView, QSizePolicy)
 from PySide6.QtWidgets import QHeaderView, QTreeWidgetItemIterator
@@ -42,7 +42,8 @@ from app.batch_lyrics import LyricsLookup, has_lrclib
 from app.ui_icons import icon
 from app.application_identity import application_icon, configure_process_identity
 from app.audio_preferences import load_preferences
-from app.profiles import DEFAULT_PROFILE, ProfileStore, content_key, profile_name, variant_key
+from app.profile_bundle import BundleError, Cancelled, export_bundle, import_bundle, read_manifest
+from app.profiles import DEFAULT_PROFILE, ProfileStore, content_key, effective_adjustments, profile_name, variant_key
 from app.song_images import selected_thumbnail
 from app.image_search import ImageSearchRegistry
 
@@ -93,22 +94,8 @@ def cover_icon(path: str | None) -> QIcon:
     return QIcon(pixmap)
 
 
-def _effective_adjustments(variant: dict, variants_by_id: dict[str, dict]) -> tuple[float, int]:
-    """Accumulate the speed/key changes inherited from parent variants."""
-    speed, semitones = 1.0, 0
-    current = variant
-    seen = set()
-    while current and current.get("id") not in seen:
-        seen.add(current.get("id"))
-        if current.get("kind") == "fx":
-            speed *= float(current.get("speed", 1))
-            semitones += int(current.get("semitones", 0))
-        current = variants_by_id.get(current.get("source_id"))
-    return speed, semitones
-
-
 def version_label(variant: dict, variants_by_id: dict[str, dict] | None = None, translate=t) -> str:
-    speed, semitones = _effective_adjustments(variant, variants_by_id or {})
+    speed, semitones = effective_adjustments(variant, variants_by_id or {})
     if variant.get("kind") == "fx":
         parts = []
         if semitones:
@@ -665,6 +652,13 @@ class ConsumerWindow(QMainWindow):
         form.addRow(t('裝置測試'), self.device_test_status)
         self.audio_device.currentIndexChanged.connect(self._apply_output_device)
         self._apply_output_device()
+        bundle_box = QGroupBox(t('個人設定檔搬移'))
+        bundle_layout = QHBoxLayout(bundle_box)
+        bundle_layout.addWidget(self._button(t('匯出設定…'), lambda _=False: self._export_profile(False)))
+        bundle_layout.addWidget(self._button(t('匯出全部（含音樂）…'), lambda _=False: self._export_profile(True)))
+        bundle_layout.addWidget(self._button(t('匯入…'), lambda _=False: self._import_profile()))
+        bundle_layout.addStretch()
+        layout.addWidget(bundle_box)
         layout.addWidget(self._button(t('儲存設定'), self.save_settings, True))
         layout.addStretch()
 
@@ -800,14 +794,15 @@ class ConsumerWindow(QMainWindow):
         self.profile_box.blockSignals(False)
         self.profile_delete.setEnabled(self.profiles.active != DEFAULT_PROFILE)
 
-    def _switch_profile(self, name):
+    def _switch_profile(self, name, reload=False):
         name = profile_name(name)
-        if name != self.profiles.active:
+        if name != self.profiles.active or reload:
             if self.playing_item is not None:
                 QMessageBox.information(self, t('個人設定檔'), t('請先停止播放，再切換個人設定檔。'))
             else:
-                self.flush_audio_preferences()
-                self._save_last_queue()
+                if name != self.profiles.active:  # a reload must not overwrite what was just imported
+                    self.flush_audio_preferences()
+                    self._save_last_queue()
                 self.profiles.switch(name)
                 self.settings['active_profile'] = name
                 try:
@@ -829,6 +824,81 @@ class ConsumerWindow(QMainWindow):
                 self._restore_last_queue()
                 self.refresh_tree()
         self._refresh_profile_box()
+
+    def _bundle_blocked(self):
+        busy = self.playing_item or self.active_op or self.pending_ops or self.jobs.current
+        if busy:
+            QMessageBox.information(self, t('個人設定檔搬移'), t('請先停止播放並等待處理完成。'))
+        return bool(busy)
+
+    def _run_bundle(self, title, work):
+        dialog = QProgressDialog(title, t('取消'), 0, 1, self)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.setMinimumDuration(0)
+
+        def progress(done, total, label):
+            dialog.setMaximum(max(total, 1))
+            dialog.setValue(done)
+            dialog.setLabelText(label)
+            QApplication.processEvents()
+            return not dialog.wasCanceled()
+        try:
+            work(progress)
+            return True
+        except Cancelled:
+            QMessageBox.information(self, title, t('已取消。'))
+        except (BundleError, OSError) as error:
+            QMessageBox.warning(self, title, str(error))
+        finally:
+            dialog.close()
+        return False
+
+    def _export_profile(self, full):
+        if self._bundle_blocked():
+            return
+        title = t('匯出個人設定檔')
+        if full and QMessageBox.question(self, title, t('全部打包會包含音樂檔與所有歌曲的處理結果，檔案可能很大，且音樂可能受著作權保護；請只用於轉移到自己的電腦。要繼續嗎？')) \
+                != QMessageBox.StandardButton.Yes:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, title, str(ROOT / f'{self.profiles.active}.zip'), t('ZIP 封存檔 (*.zip)'))
+        if not path:
+            return
+        self.flush_audio_preferences()
+        self._save_last_queue()
+        source = Path(self.settings.get('source_dir') or '')
+        if self._run_bundle(title, lambda progress: export_bundle(
+                Path(path), self.profiles, self.workspace, source, self.songs, full, progress)):
+            QMessageBox.information(self, title, t('已匯出：{p0}', p0=path))
+
+    def _import_profile(self):
+        if self._bundle_blocked():
+            return
+        title = t('匯入個人設定檔')
+        path, _ = QFileDialog.getOpenFileName(self, title, str(ROOT), t('ZIP 封存檔 (*.zip)'))
+        if not path:
+            return
+        try:
+            manifest = read_manifest(Path(path))
+        except BundleError as error:
+            QMessageBox.warning(self, title, str(error))
+            return
+        name, accepted = QInputDialog.getText(self, title, t('個人設定檔名稱'), text=manifest['profile'])
+        if not accepted or not name.strip():
+            return
+        name = profile_name(name)
+        if name in self.profiles.names() and QMessageBox.question(
+                self, title, t('個人設定檔「{p0}」已存在，要覆蓋它的歌單與最佳設定嗎？', p0=name)) != QMessageBox.StandardButton.Yes:
+            return
+        results = []
+        if not self._run_bundle(title, lambda progress: results.append(import_bundle(
+                Path(path), self.profiles, self.workspace, self.settings.get('source_dir'), name, progress))):
+            return
+        result = results[0]
+        self._switch_profile(name, reload=True)
+        if manifest['kind'] == 'full':
+            self.scan_library()
+        QMessageBox.information(self, title, t('已匯入個人設定檔「{p0}」：歌曲 {p1} 首（其中 {p2} 首已存在而保留），歌單有 {p3} 首找不到對應歌曲而略過。',
+                                               p0=result['profile'], p1=result['songs'], p2=result['kept'], p3=result['skipped_playlist']))
 
     def _new_profile(self):
         name, accepted = QInputDialog.getText(self, t('新增個人設定檔'), t('個人設定檔名稱'))
@@ -1639,12 +1709,8 @@ class ConsumerWindow(QMainWindow):
             ckey = content_key(Path(song["path"]))
         except (OSError, TypeError, KeyError):
             return None
-        vkey = item["variant_id"]
-        variants = {row["id"]: row for row in load_catalog(self.workspace, item["song_id"]).get("variants", [])}
-        if vkey in variants:
-            speed, semitones = _effective_adjustments(variants[vkey], variants)
-            vkey = variant_key(vkey, variants[vkey], speed, semitones)
-        return ckey, vkey, song.get("title", "")
+        variants = load_catalog(self.workspace, item["song_id"]).get("variants", [])
+        return ckey, variant_key(item["variant_id"], variants), song.get("title", "")
 
     def saved_effects(self):
         """This profile's best (speed, key) for the playing version, or None."""

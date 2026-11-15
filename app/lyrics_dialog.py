@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog
 from app.karaoke_assets import read_lyrics, save_lyrics, shared_images_dir, song_images_dir
 from app.lyrics import assets_dir, load_lyric_state, parse_lrc, save_lyric_state
 from app.image_assets_widget import ImageAssetsWidget
+from app.lyrics_sync import LyricSyncEditor
 
 
 class LyricsDialog(QDialog):
@@ -103,6 +104,10 @@ class LyricsDialog(QDialog):
         self.apply_button.clicked.connect(self.apply_candidate)
         search_layout.addWidget(self.apply_button)
         self.lyric_tabs.addTab(search_page, 'LRCLIB')
+        self.sync = LyricSyncEditor(song.get('path', ''), self._sync_source_text, self._apply_synced_lrc)
+        self.lyric_tabs.addTab(self.sync, t('歌詞調整'))
+        self.lyric_tabs.currentChanged.connect(lambda _: self.sync.setFocus() if self.lyric_tabs.currentWidget() is self.sync else None)
+        self.finished.connect(self.sync.dispose)
         self.images = ImageAssetsWidget(self.workspace, song_id, song,
                                         getattr(controller, 'image_search_registry', None), self,
                                         settings=controller.settings,
@@ -148,6 +153,23 @@ class LyricsDialog(QDialog):
         self.finished.connect(self.cancel_search)
         self.finished.connect(self.images.dispose)
         self.finished.connect(self.shared_images.dispose)
+
+    def _sync_source_text(self, key):
+        folder = assets_dir(self.workspace, self.song_id)
+
+        def saved(name):
+            path = folder / name
+            return path.read_text(encoding='utf-8-sig') if path.is_file() else ''
+        if key == 'manual':
+            return self.manual.toPlainText()
+        if key == 'local':
+            return self.local.toPlainText()
+        field, name = ('syncedLyrics', 'lrclib.lrc') if key == 'lrclib' else ('plainLyrics', 'lrclib.txt')
+        return (self.chosen.get(field) or '') if self.chosen else saved(name)
+
+    def _apply_synced_lrc(self, text):
+        self.local.setPlainText(text)
+        self.source.setCurrentIndex(self.source.findData('local'))
 
     def _image_scope_changed(self, index):
         inactive = self.images if index >= 2 else self.shared_images

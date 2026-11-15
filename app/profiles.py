@@ -35,10 +35,27 @@ def content_key(path: Path) -> str:
     return digest.hexdigest()[:24]
 
 
-def variant_key(variant_id: str, variant: dict | None, speed: float, semitones: int) -> str:
+def effective_adjustments(variant: dict, variants_by_id: dict[str, dict]) -> tuple[float, int]:
+    """Accumulate the speed/key changes inherited from parent variants."""
+    speed, semitones = 1.0, 0
+    current = variant
+    seen = set()
+    while current and current.get("id") not in seen:
+        seen.add(current.get("id"))
+        if current.get("kind") == "fx":
+            speed *= float(current.get("speed", 1))
+            semitones += int(current.get("semitones", 0))
+        current = variants_by_id.get(current.get("source_id"))
+    return speed, semitones
+
+
+def variant_key(variant_id: str, variants: list[dict]) -> str:
     """Stable across machines: built-ins by name, generated versions by style and baked-in adjustments."""
+    by_id = {row['id']: row for row in variants}
+    variant = by_id.get(variant_id)
     if variant_id in ('original', 'instrumental') or not variant:
         return variant_id
+    speed, semitones = effective_adjustments(variant, by_id)
     kind = variant.get('style_label') or variant.get('kind') or 'version'
     return f'{kind}|{speed:.3f}|{semitones:+d}'
 
