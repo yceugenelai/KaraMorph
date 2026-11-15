@@ -39,6 +39,12 @@ class KaraokeCanvas(QWidget):
         self.empty_lyrics_text = t('尚未加入歌詞')
         self.motion_enabled = False
         self.motion_ms = 0.0
+        # Appearance hooks used by the MV exporter; defaults match the live karaoke view.
+        self.no_image_text = "no images"
+        self.font_scale = 1.0
+        self.ui_scale = None  # set for resolution-independent sizing (1.0 = 1280x720 look)
+        self.center_ratio = 5 / 6
+        self.highlight_color = "#ffffff"
         self.setMinimumSize(640, 360)
 
     def visible_line_indices(self):
@@ -76,21 +82,22 @@ class KaraokeCanvas(QWidget):
                                    (rect.height() - scaled.height()) // 2, scaled)
         else:
             painter.fillRect(rect, QColor("#13263b"))
-            painter.setPen(QColor("#a9b8c8"))
-            painter.setFont(QFont("Microsoft JhengHei", 22))
-            painter.drawText(rect.adjusted(0, 0, 0, -rect.height() // 2),
-                             Qt.AlignmentFlag.AlignCenter, "no images")
+            if self.no_image_text:
+                painter.setPen(QColor("#a9b8c8"))
+                painter.setFont(QFont("Microsoft JhengHei", 22))
+                painter.drawText(rect.adjusted(0, 0, 0, -rect.height() // 2),
+                                 Qt.AlignmentFlag.AlignCenter, self.no_image_text)
         if not self.lines:
             painter.setPen(QColor("#f0f5fa"))
             painter.setFont(QFont("Microsoft JhengHei", 24))
             painter.drawText(rect.adjusted(0, rect.height() * 2 // 3, 0, 0), Qt.AlignmentFlag.AlignCenter, self.empty_lyrics_text)
             return
-        line_height = max(32, min(68, rect.height() // 10))
+        line_height = (round(68 * self.ui_scale) if self.ui_scale else max(32, min(68, rect.height() // 10)))
         font = QFont("Microsoft JhengHei")
-        font.setPixelSize(max(24, min(42, rect.width() // 27)))
+        font.setPixelSize(max(24, round((42 * self.ui_scale if self.ui_scale else min(42, rect.width() // 27)) * self.font_scale)))
         font.setBold(True)
         painter.setFont(font)
-        center_y = rect.height() * 5 // 6
+        center_y = round(rect.height() * self.center_ratio)
         center_index = int(self.progress)
         start_index = center_index if self.synced else max(0, center_index - 1)
         for index in self.visible_line_indices():
@@ -105,7 +112,7 @@ class KaraokeCanvas(QWidget):
             bounds.moveTop(round(y - line_height / 2))
             bounds.setHeight(line_height)
             highlighted = index == center_index
-            key = (text, bounds.width(), line_height, font.pixelSize(), highlighted)
+            key = (text, bounds.width(), line_height, font.pixelSize(), highlighted, self.highlight_color)
             pix = self._lyric_cache.get(key)
             if pix is None:
                 if len(self._lyric_cache) >= 256:
@@ -123,7 +130,7 @@ class KaraokeCanvas(QWidget):
                 for dx, dy in ((-3, -3), (0, -3), (3, -3), (-3, 0), (3, 0),
                                (-3, 3), (0, 3), (3, 3), (0, 5)):
                     ink.drawText(local.translated(dx, dy), Qt.AlignmentFlag.AlignCenter, text)
-                ink.setPen(QColor("#ffffff") if highlighted else QColor("#d7e1ea"))
+                ink.setPen(QColor(self.highlight_color) if highlighted else QColor("#d7e1ea"))
                 ink.drawText(local, Qt.AlignmentFlag.AlignCenter, text)
                 ink.end()
                 self._lyric_cache[key] = pix

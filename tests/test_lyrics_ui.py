@@ -71,7 +71,7 @@ class LyricsUiTests(unittest.TestCase):
         reply.finished.emit()
 
     def test_lyrics_and_images_are_separate_and_preserve_edits(self):
-        self.assertEqual(self.dialog.tabs.count(), 2)
+        self.assertEqual(self.dialog.tabs.count(), 3)
         self.assertEqual(self.dialog.lyric_tabs.count(), 4)
         self.assertEqual(self.dialog.images.tabs.count(), 4)
         self.dialog.manual.setPlainText('unsaved lyric')
