@@ -134,6 +134,7 @@ class MvRenderer:
         self.canvas = KaraokeCanvas()
         self.canvas.resize(self.width, self.height)
         self.canvas.no_image_text = ''
+        self.canvas.fill_background = True
         self.canvas.ui_scale = self.width / 1280
         self.canvas.empty_lyrics_text = ''
         self.canvas.font_scale, self.canvas.center_ratio, self.canvas.highlight_color = font_scale, center_ratio, color

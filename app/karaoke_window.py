@@ -42,6 +42,7 @@ class KaraokeCanvas(QWidget):
         # Appearance hooks used by the MV exporter; defaults match the live karaoke view.
         self.no_image_text = "no images"
         self.font_scale = 1.0
+        self.fill_background = False  # crop to fill the frame instead of letterboxing
         self.ui_scale = None  # set for resolution-independent sizing (1.0 = 1280x720 look)
         self.center_ratio = 5 / 6
         self.highlight_color = "#ffffff"
@@ -65,11 +66,14 @@ class KaraokeCanvas(QWidget):
         painter.fillRect(rect, gradient)
         if self.background and not self.background.isNull():
             pix = self.background
-            key = (pix.cacheKey(), rect.width(), rect.height())
+            key = (pix.cacheKey(), rect.width(), rect.height(), self.fill_background)
             if key != self._background_key:
-                factor = min(rect.width() / pix.width(), rect.height() / pix.height())
-                self._scaled_background = pix.scaled(round(pix.width() * factor), round(pix.height() * factor),
-                                    Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                factor = (max if self.fill_background else min)(rect.width() / pix.width(), rect.height() / pix.height())
+                fill = self.fill_background
+                self._scaled_background = pix.scaled(
+                    (math.ceil if fill else round)(pix.width() * factor), (math.ceil if fill else round)(pix.height() * factor),
+                    Qt.AspectRatioMode.IgnoreAspectRatio if fill else Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
                 self._background_key = key
             scaled = self._scaled_background
             if self.motion_enabled:
