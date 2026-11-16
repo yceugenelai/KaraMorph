@@ -11,11 +11,11 @@
 
 ### 歌曲處理
 
-![歌曲處理](docs/images/processing-placeholder.png)
+![歌曲處理](docs/images/zh-TW/readme-processing.png)
 
 ### 唱歌中
 
-![唱歌中](docs/images/singing-placeholder.png)
+![唱歌中](docs/images/zh-TW/readme-singing.png)
 
 <sub>截圖示範曲：<a href="https://commons.wikimedia.org/wiki/File:Amazing_Grace_US_Marine_Band.ogg">Amazing Grace — United States Marine Band</a>。Wikimedia Commons 標示此錄音與 John Newton 原版英文歌詞為公有領域。</sub>
 

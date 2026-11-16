@@ -11,11 +11,11 @@
 
 ### 楽曲の処理
 
-![楽曲の処理](docs/images/processing-placeholder.png)
+![楽曲の処理](docs/images/ja/readme-processing.png)
 
 ### カラオケ再生
 
-![カラオケ再生](docs/images/singing-placeholder.png)
+![カラオケ再生](docs/images/ja/readme-singing.png)
 
 <sub>デモ曲：<a href="https://commons.wikimedia.org/wiki/File:Amazing_Grace_US_Marine_Band.ogg">Amazing Grace — United States Marine Band</a>。Wikimedia Commons では、この録音と John Newton による原版の英語歌詞はパブリックドメインとされています。</sub>
 

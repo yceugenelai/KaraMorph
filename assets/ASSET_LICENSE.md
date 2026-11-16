@@ -23,6 +23,6 @@ These are KaraMorph branding assets; all rights held by the project owner are re
 
 ## Screenshots and embedded content
 
-`docs/images/processing-placeholder.png` and `singing-placeholder.png` document the actual application. They are not covered by the background MIT grant. The current processing capture contains no album-cover thumbnails; the singing capture displays lines from John Newton's original English lyrics for Amazing Grace. Both replacement captures were reviewed on 2026-10-07. No recording is included. Embedded content retains its own rights status; see [ASSET_CREDITS.md](../docs/ASSET_CREDITS.md) for the demo source and reviewed scope.
+`docs/images/<language>/readme-processing.png` and `readme-singing.png` document the application UI. They are not covered by the background MIT grant. The processing captures are generated from demo fixture data and contain no album-cover thumbnails; the singing captures display lines from John Newton's original English lyrics for Amazing Grace over `bg5.jpg`. They were regenerated on 2026-11-16. No recording is included. Embedded content retains its own rights status; see [ASSET_CREDITS.md](../docs/ASSET_CREDITS.md) for the demo source and reviewed scope.
 
 Generation provenance credits OpenAI ChatGPT for the icons and paid Nano Banana Pro in Google AI Studio for the backgrounds. These providers do not endorse KaraMorph.

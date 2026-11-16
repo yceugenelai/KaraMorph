@@ -11,11 +11,11 @@ Can't find the song you want in the karaoke catalog? Want to hear a familiar son
 
 ### Song processing
 
-![Song processing](docs/images/processing-placeholder.png)
+![Song processing](docs/images/en/readme-processing.png)
 
 ### Karaoke playback
 
-![Karaoke playback](docs/images/singing-placeholder.png)
+![Karaoke playback](docs/images/en/readme-singing.png)
 
 <sub>Screenshot demo: <a href="https://commons.wikimedia.org/wiki/File:Amazing_Grace_US_Marine_Band.ogg">Amazing Grace — United States Marine Band</a>. Wikimedia Commons identifies the recording and John Newton’s original English lyrics as public domain.</sub>
 

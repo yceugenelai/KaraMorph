@@ -73,20 +73,52 @@
       "reuse_license": "MIT"
     },
     {
-      "path": "docs/images/processing-placeholder.png",
-      "sha256": "e7460e5fa459c6012c8d731ad8de60304d920e2ea9b3b165934e334cc7b0aab7",
-      "provider_or_supplier": "KaraMorph project owner",
-      "method": "Actual application screenshot",
-      "source_evidence": "Project owner supplied replacement capture, visually reviewed 2026-10-07",
-      "review_status": "cover_free_capture_reviewed"
+      "path": "docs/images/en/readme-processing.png",
+      "sha256": "93488fcac4d65d52c6c7fc9746d17fb3930105ab46cd256a983aef738a585ec3",
+      "provider_or_supplier": "KaraMorph project (generated for documentation)",
+      "method": "Offscreen capture of the KaraMorph UI with demo fixture data (Amazing Grace); localized per README language",
+      "source_evidence": "Generated 2026-11-16 and visually reviewed",
+      "review_status": "generated_from_demo_fixture_no_user_library"
     },
     {
-      "path": "docs/images/singing-placeholder.png",
-      "sha256": "583ed11bf4d48b7db27097c17238a231a9cda6d273509a322b68f5e5ff399527",
-      "provider_or_supplier": "KaraMorph project owner",
-      "method": "Actual application screenshot",
-      "source_evidence": "Project owner supplied replacement capture, visually reviewed 2026-10-07",
-      "review_status": "amazing_grace_original_english_lyrics_reviewed"
+      "path": "docs/images/en/readme-singing.png",
+      "sha256": "672752112d2b2aea4f7d91cb57745fab5af52f704da8153dc55db1999de65ad2",
+      "provider_or_supplier": "KaraMorph project (generated for documentation)",
+      "method": "Offscreen capture of the KaraMorph UI with demo fixture data (Amazing Grace); localized per README language",
+      "source_evidence": "Generated 2026-11-16 and visually reviewed",
+      "review_status": "amazing_grace_original_english_lyrics_with_bg5_background"
+    },
+    {
+      "path": "docs/images/zh-TW/readme-processing.png",
+      "sha256": "6d555b46014ecd209e95ae8302a0f6348cbe27429d8f0ded3dfde73c1c2f4c26",
+      "provider_or_supplier": "KaraMorph project (generated for documentation)",
+      "method": "Offscreen capture of the KaraMorph UI with demo fixture data (Amazing Grace); localized per README language",
+      "source_evidence": "Generated 2026-11-16 and visually reviewed",
+      "review_status": "generated_from_demo_fixture_no_user_library"
+    },
+    {
+      "path": "docs/images/zh-TW/readme-singing.png",
+      "sha256": "174f44597380e347c1d945907d4e66f169642c195041ef8e0d0343ba8f032411",
+      "provider_or_supplier": "KaraMorph project (generated for documentation)",
+      "method": "Offscreen capture of the KaraMorph UI with demo fixture data (Amazing Grace); localized per README language",
+      "source_evidence": "Generated 2026-11-16 and visually reviewed",
+      "review_status": "amazing_grace_original_english_lyrics_with_bg5_background"
+    },
+    {
+      "path": "docs/images/ja/readme-processing.png",
+      "sha256": "b608572f1a538f1bd9aab29b38e5fd4ce9d68a54c4efbdb7ead2a01fb826ea72",
+      "provider_or_supplier": "KaraMorph project (generated for documentation)",
+      "method": "Offscreen capture of the KaraMorph UI with demo fixture data (Amazing Grace); localized per README language",
+      "source_evidence": "Generated 2026-11-16 and visually reviewed",
+      "review_status": "generated_from_demo_fixture_no_user_library"
+    },
+    {
+      "path": "docs/images/ja/readme-singing.png",
+      "sha256": "8bda8daffdde311ab7910d545ea1636a767888c3f4a30957e18e91ed8140c97d",
+      "provider_or_supplier": "KaraMorph project (generated for documentation)",
+      "method": "Offscreen capture of the KaraMorph UI with demo fixture data (Amazing Grace); localized per README language",
+      "source_evidence": "Generated 2026-11-16 and visually reviewed",
+      "review_status": "amazing_grace_original_english_lyrics_with_bg5_background"
     }
   ],
   "reuse_licenses": {
@@ -95,8 +127,8 @@
     "screenshots": "documentation captures; embedded content not relicensed"
   },
   "screenshot_review": {
-    "processing": "Updated actual screenshot visually reviewed: no album-cover thumbnail",
-    "singing": "Amazing Grace capture reviewed; visible lines correspond to John Newton original English lyrics",
+    "processing": "README captures regenerated from demo fixture data: no personal library, no album-cover thumbnails",
+    "singing": "README captures use assets/backgrounds/bg5.jpg and John Newton original English lyrics for Amazing Grace",
     "recording_distributed": false
   },
   "maintainer_website": "https://www.opticalpivot.net/",

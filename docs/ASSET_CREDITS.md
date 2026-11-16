@@ -23,17 +23,15 @@ Google's [image-generation documentation](https://ai.google.dev/gemini-api/docs/
 
 ## App screenshots — source confirmed, updated captures and lyric-version notes
 
-- `docs/images/processing-placeholder.png`: actual KaraMorph application capture supplied by the project owner. The updated image was visually reviewed on 2026-10-06 and no longer contains the previous album-cover thumbnail.
-- `docs/images/singing-placeholder.png`: actual KaraMorph application capture supplied by the project owner. It includes displayed song lyrics. The supplied generated background has its own provenance above.
+- `docs/images/{en,zh-TW,ja}/readme-processing.png` and `readme-singing.png`: KaraMorph UI captures generated on 2026-11-16 with demo fixture data (silent audio, no user library), once per README language so the interface text matches the README. The singing captures use `assets/backgrounds/bg5.jpg`, which has its own provenance above. The remaining screenshots under `docs/images/<language>/` are generated the same way for the feature guides.
 
-The updated singing capture was visually reviewed on 2026-10-07. It shows Amazing Grace and lines from John Newton’s original English lyrics. The processing capture shows Amazing Grace versions without album-cover thumbnails. Other song names appear in the library, but their audio and lyrics are not distributed in this source export.
+The singing captures show Amazing Grace and lines from John Newton’s original English lyrics. The processing captures list Amazing Grace and three public-domain/traditional titles used only as demo names; no audio or lyrics for them are distributed in this source export.
 
 ## Repository license scope
 
 KaraMorph code and the four named generated background files use the project [MIT license](../LICENSE), to the extent of rights held by the project owner. The three icons remain rights-reserved branding assets. Provider terms do not themselves impose these downstream licenses; these choices were explicitly made by the project owner. See [ASSET_LICENSE.md](../assets/ASSET_LICENSE.md) for scope. Third-party artwork/lyrics visible in screenshots are not relicensed under MIT. Source and bootstrap exports retain these notices.
 
-No audio tracks or model weights are included in the source export. The two `*-placeholder.png` filenames now refer to real screenshots and are retained for README link compatibility.
-
+No audio tracks or model weights are included in the source export.
 ## Screenshot demo — Amazing Grace (2026-10-07)
 
 [Amazing Grace, United States Marine Band](https://commons.wikimedia.org/wiki/File:Amazing_Grace_US_Marine_Band.ogg) is the screenshot demo source selected by the owner. The Commons file page separately marks the performance/recording and Capt. Ryan Nowlin’s arrangement as U.S. federal-government public-domain works, and John Newton’s original English lyrics as public domain (author died in 1807). The lyric conclusion is independent of the recording status. Modern translations or added lyrics require their own rights check; the federal-government recording designation specifically states its U.S. basis.
