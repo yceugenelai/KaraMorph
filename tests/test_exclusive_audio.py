@@ -79,6 +79,36 @@ class ExclusiveTests(unittest.TestCase):
                 np.testing.assert_allclose(samples[:240]/32767, .2, atol=.0001)
             mic.stop()
 
+    def test_take_records_song_position_even_when_tempo_is_slowed(self):
+        mic, player = self.make_player(length=48000 * 4)
+        player.stream = Mock()
+        renderer = Mock()
+        renderer.position = 0
+        renderer.ended = False
+        renderer.error = None
+
+        def rendered(backing, guide, count):
+            backing.fill(.3)
+            guide.fill(0)
+            renderer.position += count // 2  # half speed: the source advances half as fast
+            return count
+        renderer.read_into.side_effect = rendered
+        player.renderer = renderer
+        with tempfile.TemporaryDirectory() as folder:
+            mic.start_recording(Path(folder), 'song', 'variant', Path('backing.wav'))
+            for _ in range(200):
+                with patch('app.exclusive_audio.time.monotonic', return_value=10.):
+                    player._callback(np.full((128, 2), .1, np.float32), np.empty((128, 2), np.float32), 128,
+                                     SimpleNamespace(outputBufferDacTime=1.0, currentTime=1.), None)
+            mic.finish_recording()
+            metadata = json.loads(next(Path(folder).rglob('session.json')).read_text())
+            points = metadata['song_position_map']
+            self.assertGreaterEqual(len(points), 2)
+            (first_mic, first_song), (last_mic, last_song) = points[0], points[-1]
+            self.assertEqual((first_mic, first_song), (0, 0))
+            self.assertAlmostEqual((last_song - first_song) / (last_mic - first_mic), 0.5, delta=0.02)
+            mic.stop()
+
     def test_effect_audio_and_microphone_stay_separate_and_use_audible_source_time(self):
         mic, player = self.make_player(length=48000)
         player.stream = Mock()

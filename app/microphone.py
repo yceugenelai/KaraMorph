@@ -35,6 +35,7 @@ class MicrophoneService(QObject):
         self.record_temp = None
         self.record_metadata = None
         self.record_frames = 0
+        self.record_positions = []
         self.timer = QTimer(self)
         self.timer.setInterval(20)
         self.timer.timeout.connect(self._drain)
@@ -155,6 +156,7 @@ class MicrophoneService(QObject):
             self.exclusive_player.capture.clear()
             self.exclusive_player.capture_enabled = True
         self.record_frames = 0
+        self.record_positions = []
         self.record_metadata = {
             "session_id": session_id, "song_id": song_id, "variant_id": variant_id, "profile": profile,
             "started_at": datetime.now(timezone.utc).isoformat(),
@@ -172,6 +174,7 @@ class MicrophoneService(QObject):
             self.exclusive_player.capture_enabled = False
         self._drain()
         recording, temp, metadata = self.record_file, self.record_temp, self.record_metadata
+        positions, self.record_positions = self.record_positions, []
         frames = self.record_frames
         self.record_file = None
         self.record_temp = None
@@ -194,6 +197,8 @@ class MicrophoneService(QObject):
         final = temp.with_name("microphone.wav")
         temp.replace(final)
         metadata["duration_ms"] = round(frames * 1000 / metadata["sample_rate"])
+        if len(positions) >= 2:
+            metadata["song_position_map"] = positions
         atomic_json(final.parent / "session.json", metadata)
         self.recordingFinished.emit(metadata["song_id"])
 
@@ -243,10 +248,16 @@ class MicrophoneService(QObject):
         if self.exclusive_player:
             while self.exclusive_player.capture:
                 samples = self.exclusive_player.capture.popleft()
-                backing = None
+                backing, source_frame = None, None
                 if isinstance(samples, tuple):
-                    samples, backing = samples
+                    samples, backing, *rest = samples
+                    source_frame = rest[0] if rest else None
                 if self.record_file:
+                    mic_ms = round(self.record_frames * 1000 / self.format.sampleRate())
+                    if source_frame is not None and (not self.record_positions
+                                                     or mic_ms - self.record_positions[-1][0] >= 200):
+                        self.record_positions.append(
+                            [mic_ms, round(source_frame * 1000 / self.exclusive_player.rate)])
                     self.record_file.writeframesraw((np.clip(samples, -1, 1) * 32767).astype('<i2').tobytes())
                     if self.record_backing_file:
                         if backing is None:

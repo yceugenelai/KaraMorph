@@ -202,6 +202,8 @@ class ConsumerWindow(QMainWindow):
         self.settings_page = QWidget()
         tabs.addTab(self.sing_page, t('唱歌'))
         tabs.addTab(self.process_page, t('處理歌曲'))
+        self.mv_page = QWidget()
+        tabs.addTab(self.mv_page, t('MV 匯出'))
         tabs.addTab(self.settings_page, t('設定'))
         language_panel = QWidget(tabs)
         language_layout = QHBoxLayout(language_panel)
@@ -234,6 +236,7 @@ class ConsumerWindow(QMainWindow):
         self._refresh_profile_box()
         self._build_sing_page()
         self._build_process_page()
+        self._build_mv_page()
         self._build_settings_page()
         self._closing = False
         self.work_timer = QTimer(self)
@@ -417,6 +420,7 @@ class ConsumerWindow(QMainWindow):
         self.tree.setIconSize(QPixmap(54, 54).size())
         self.tree.itemSelectionChanged.connect(self._update_selection)
         self.tree.itemChanged.connect(lambda *_: self._update_selection())
+        self.tree.setExpandsOnDoubleClick(False)
         self.tree.itemClicked.connect(self._tree_clicked)
         self.tree.itemExpanded.connect(lambda item: self.expanded_song_ids.add(item.data(0, Qt.ItemDataRole.UserRole)) if item.parent() is None else None)
         self.tree.itemCollapsed.connect(lambda item: self.expanded_song_ids.discard(item.data(0, Qt.ItemDataRole.UserRole)) if item.parent() is None else None)
@@ -1174,8 +1178,47 @@ class ConsumerWindow(QMainWindow):
         return row
 
     def _tree_clicked(self, item, column):
-        if item.parent() is None and column not in {3, 4, 5, 6}:
+        key = item.data(0, Qt.ItemDataRole.UserRole)
+        is_group = isinstance(key, tuple) and key[0] == "recordings"
+        if (item.parent() is None or is_group) and column not in {3, 4, 5, 6}:
             item.setExpanded(not item.isExpanded())
+
+    def _build_mv_page(self):
+        from app.mv_export_widget import MvExportWidget
+        layout = QVBoxLayout(self.mv_page)
+        row = QHBoxLayout()
+        row.addWidget(QLabel(t('歌曲')))
+        self.mv_song = QComboBox()
+        row.addWidget(self.mv_song, 1)
+        layout.addLayout(row)
+        self.mv = MvExportWidget(self, '')
+        layout.addWidget(self.mv, 1)
+        self.mv_song.currentIndexChanged.connect(lambda *_: self.mv.set_song(self.mv_song.currentData() or ''))
+        self.centralWidget().currentChanged.connect(
+            lambda _: self._refresh_mv_page() if self.centralWidget().currentWidget() is self.mv_page else None)
+
+    def _refresh_mv_page(self):
+        if self.mv.job:
+            return
+        item = self.tree.currentItem()
+        while item is not None and item.parent() is not None:
+            item = item.parent()
+        selected = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
+        wanted = selected if isinstance(selected, str) and selected in self.song_map else (self.mv_song.currentData() or '')
+        self.mv_song.blockSignals(True)
+        self.mv_song.clear()
+        for song in self.songs:
+            if song.get('available', True):
+                label = song['title'] + (f" — {song['artist']}" if song.get('artist') else '')
+                self.mv_song.addItem(label, song['id'])
+        self.mv_song.setCurrentIndex(max(0, self.mv_song.findData(wanted)))
+        self.mv_song.blockSignals(False)
+        chosen = self.mv_song.currentData() or ''
+        self.mv.song = self.song_map.get(chosen, {})
+        if chosen == self.mv.song_id:
+            self.mv.refresh()
+        else:
+            self.mv.set_song(chosen)
 
     def _context_menu(self, point):
         item = self.tree.itemAt(point)
@@ -1597,6 +1640,7 @@ class ConsumerWindow(QMainWindow):
             event.ignore()
             return
         self._closing = True
+        self.mv.dispose()
         self.flush_audio_preferences()
         self._save_last_queue()
         self.lyric_lookup.cancel()

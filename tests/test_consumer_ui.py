@@ -192,6 +192,34 @@ class ConsumerUiTests(unittest.TestCase):
         self.window.show()
         self.app.processEvents()
 
+    def test_recording_group_toggles_on_single_click_and_mv_tab_follows_selection(self):
+        import numpy as np
+        import soundfile as sf
+        from app.recordings import recordings_dir
+        self.populate(2)
+        take = recordings_dir(self.window.workspace, 's1') / 'r1'
+        take.mkdir(parents=True)
+        sf.write(str(take / 'microphone.wav'), np.zeros((4410, 2), dtype=np.float32), 44100)
+        (take / 'session.json').write_text(json.dumps(dict(song_id='s1', session_id='r1', profile='default',
+            started_at='2026-01-01T00:00:00', duration_ms=100, variant_id='original')), encoding='utf-8')
+        self.window.refresh_tree()
+        root = self.window.tree.topLevelItem(1)
+        root.setExpanded(True)
+        group = root.child(root.childCount() - 1)
+        self.assertEqual(group.data(0, Qt.ItemDataRole.UserRole), ('recordings', 's1'))
+        self.assertFalse(group.isExpanded())
+        self.window._tree_clicked(group, 0)
+        self.assertTrue(group.isExpanded())
+        self.window._tree_clicked(group, 0)
+        self.assertFalse(group.isExpanded())
+        self.assertFalse(self.window.tree.expandsOnDoubleClick())
+        tabs = self.window.centralWidget()
+        self.assertEqual(tabs.tabText(2), 'MV 匯出')
+        self.window.tree.setCurrentItem(root)
+        tabs.setCurrentWidget(self.window.mv_page)
+        self.assertEqual(self.window.mv.song_id, 's1')
+        self.assertEqual(self.window.mv_song.count(), 2)
+
     def test_refresh_preserves_scroll_selection_and_checks(self):
         self.populate()
         tree = self.window.tree
