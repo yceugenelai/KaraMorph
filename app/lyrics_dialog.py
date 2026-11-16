@@ -18,6 +18,10 @@ from app.lyrics_sync import LyricSyncEditor
 
 
 class LyricsDialog(QDialog):
+    def _output_device(self):
+        box = getattr(self.controller, 'audio_device', None)
+        return box.currentData() if box is not None else None
+
     def __init__(self, controller, song_id):
         super().__init__(controller)
         self.controller, self.song_id = controller, song_id
@@ -104,7 +108,8 @@ class LyricsDialog(QDialog):
         self.apply_button.clicked.connect(self.apply_candidate)
         search_layout.addWidget(self.apply_button)
         self.lyric_tabs.addTab(search_page, 'LRCLIB')
-        self.sync = LyricSyncEditor(song.get('path', ''), self._sync_source_text, self._apply_synced_lrc)
+        self.sync = LyricSyncEditor(song.get('path', ''), self._sync_source_text, self._apply_synced_lrc,
+                                    output_device=self._output_device)
         self.lyric_tabs.addTab(self.sync, t('歌詞調整'))
         self.lyric_tabs.currentChanged.connect(lambda _: self.sync.setFocus() if self.lyric_tabs.currentWidget() is self.sync else None)
         self.finished.connect(self.sync.dispose)

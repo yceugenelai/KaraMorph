@@ -65,6 +65,20 @@ class SyncEditorTests(unittest.TestCase):
         editor.apply()
         self.assertEqual(parse_lrc(applied[0]).lines, ['a', 'b', 'c'])
 
+    def test_playback_follows_the_selected_output_device(self):
+        chosen = ['first']
+        editor = LyricSyncEditor('', lambda key: 'a', lambda text: None, output_device=lambda: chosen[0])
+        editor.player, editor.output = Mock(), Mock()
+        editor.player.isPlaying.return_value = False
+        editor.player.position.return_value = 0
+        editor.output.device.return_value = None
+        editor.toggle_play()
+        editor.output.setDevice.assert_called_once_with('first')
+        chosen[0] = 'second'
+        editor.toggle_play()
+        editor.output.setDevice.assert_called_with('second')
+        editor.player.play.assert_called()
+
     def test_edit_cells_and_apply_blocked_when_untimed(self):
         editor, applied = self.make('[00:01]a\n[00:02]b')
         editor.table.item(0, 2).setText('fixed')

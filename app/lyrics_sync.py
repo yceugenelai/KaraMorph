@@ -79,11 +79,14 @@ def rows_to_lrc(rows) -> str:
 class LyricSyncEditor(QWidget):
     """Space stamps the next line at the playhead; every stamp can be re-done or nudged."""
 
-    def __init__(self, audio_path, load_source, apply_lrc, parent=None):
+    def __init__(self, audio_path, load_source, apply_lrc, parent=None, output_device=None):
         super().__init__(parent)
         self.load_source, self.apply_lrc = load_source, apply_lrc
+        # Callable returning the QAudioDevice chosen in Settings (None: system default).
+        self.output_device = output_device
         self.rows, self.cursor, self.history, self.dirty = [], 0, [], False
         self.player = None
+        self.output = None
         self._building = False
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -166,8 +169,18 @@ class LyricSyncEditor(QWidget):
         self.player = QMediaPlayer(self)
         self.output = QAudioOutput(self)
         self.player.setAudioOutput(self.output)
+        self._apply_output_device()
         self.player.setSource(QUrl.fromLocalFile(str(path)))
         self.player.durationChanged.connect(lambda ms: self.slider.setRange(0, max(0, ms)))
+
+    def _apply_output_device(self):
+        """Follow the output device selected in Settings, even if it changed after opening."""
+        if self.output is None:
+            return
+        from PySide6.QtMultimedia import QMediaDevices
+        device = (self.output_device() if self.output_device else None) or QMediaDevices.defaultAudioOutput()
+        if self.output.device() != device:
+            self.output.setDevice(device)
 
     def position_ms(self) -> int:
         return int(self.player.position()) if self.player else 0
@@ -178,6 +191,7 @@ class LyricSyncEditor(QWidget):
         if self.player.isPlaying():
             self.player.pause()
         else:
+            self._apply_output_device()
             self.player.play()
 
     def seek(self, ms):
@@ -302,6 +316,7 @@ class LyricSyncEditor(QWidget):
         if start is not None:
             self.seek(start - PREROLL_MS)
         if self.player:
+            self._apply_output_device()
             self.player.play()
         self._refresh()
         self.status.setText(t('從第 {p0} 句重打：{p1}', p0=self.cursor + 1, p1=self.rows[self.cursor][1] or t('（空白）')))
