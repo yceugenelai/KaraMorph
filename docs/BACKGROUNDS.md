@@ -6,9 +6,9 @@ Back to the [README](../README.md)
 
 Background images rotate in random order while you sing. You can add your own images per song, or use images shared by all songs.
 
-![Assets → Images: pick images for this song](images/images-sub0.png)
+![Assets → Images: pick images for this song](images/en/images-sub0.png)
 
-![Images and lyrics in the singing view](images/karaoke-window.png)
+![Images and lyrics in the singing view](images/en/karaoke-window.png)
 
 ## Where backgrounds come from
 

@@ -6,9 +6,9 @@
 
 歌唱中の背景画像はランダムな順で切り替わります。曲ごとに自分の画像を追加することも、すべての曲で共有する画像を使うこともできます。
 
-![素材 → 画像：この曲の画像を選ぶ](images/images-sub0.png)
+![素材 → 画像：この曲の画像を選ぶ](images/ja/images-sub0.png)
 
-![歌唱画面の背景と字幕](images/karaoke-window.png)
+![歌唱画面の背景と字幕](images/ja/karaoke-window.png)
 
 ## 背景の取得元
 

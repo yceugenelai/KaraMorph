@@ -6,9 +6,9 @@
 
 唱歌時的背景圖會隨機輪播。你可以替每首歌放自己的圖，也可以使用所有歌曲共用的圖。
 
-![素材 → 圖片：挑選這首歌的圖片](images/images-sub0.png)
+![素材 → 圖片：挑選這首歌的圖片](images/zh-TW/images-sub0.png)
 
-![唱歌畫面中的背景與字幕](images/karaoke-window.png)
+![唱歌畫面中的背景與字幕](images/zh-TW/karaoke-window.png)
 
 ## 背景從哪裡來
 

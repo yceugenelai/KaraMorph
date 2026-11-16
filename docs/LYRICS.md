@@ -6,7 +6,7 @@ Back to the [README](../README.md)
 
 Lyrics can be searched automatically, typed in, or imported as your own LRC. With an LRC the singing view follows the lyrics line by line. Playback also works without lyrics.
 
-![Assets → Lyrics: the lyric source selector and sub-tabs](images/lyrics-local.png)
+![Assets → Lyrics: the lyric source selector and sub-tabs](images/en/lyrics-local.png)
 
 ## Getting lyrics
 

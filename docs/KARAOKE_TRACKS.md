@@ -6,7 +6,7 @@ Back to the [README](../README.md)
 
 KaraMorph separates your own songs into vocals and backing, producing a "Backing only" track you can sing over, without waiting for a karaoke catalog to include the song.
 
-![The Songs tab: expand a song to see its versions and recordings](images/process-songs.png)
+![The Songs tab: expand a song to see its versions and recordings](images/en/process-songs.png)
 
 ## Steps
 

@@ -6,7 +6,7 @@
 
 把同一首歌改成不同的曲風，例如酒廊爵士，並保留成新的版本，可以像原曲一樣加入歌單。
 
-![「製作新版本」視窗](images/version-dialog.png)
+![「製作新版本」視窗](images/zh-TW/version-dialog.png)
 
 ## 步驟
 

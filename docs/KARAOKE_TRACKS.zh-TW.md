@@ -6,7 +6,7 @@
 
 KaraMorph 會把你自己的歌曲分離成人聲與伴奏，產生可直接演唱的「純伴奏」，不必等卡拉 OK 收錄。
 
-![「處理歌曲」頁：展開歌曲可看到各版本與錄音](images/process-songs.png)
+![「處理歌曲」頁：展開歌曲可看到各版本與錄音](images/zh-TW/process-songs.png)
 
 ## 步驟
 

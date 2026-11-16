@@ -6,9 +6,9 @@
 
 音楽に合わせてスペースキーを押すだけで、テキストだけの歌詞を1行ずつの LRC にできます。LRCLIB から取得したものを含め、既存の LRC の再調整もできます。行単位で、単語ごとの時間合わせは不要です。
 
-![歌詞タイミング調整](images/lyric-timing.png)
+![歌詞タイミング調整](images/ja/lyric-timing.png)
 
-<sub>デモ曲：Amazing Grace（パブリックドメイン、[素材クレジット](ASSET_CREDITS.md)参照）。画面は繁体字中国語の UI です。</sub>
+<sub>デモ曲：Amazing Grace（パブリックドメイン、[素材クレジット](ASSET_CREDITS.md)参照）。</sub>
 
 ## 開き方
 

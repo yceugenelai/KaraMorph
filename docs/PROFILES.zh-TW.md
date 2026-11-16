@@ -6,9 +6,9 @@
 
 視窗右上角可以新增或切換個人設定檔，讓不同的人（或不同用途）各自保留自己的設定，共用同一個歌曲庫。
 
-![右上角的個人設定檔選單](images/profile-box.png)
+![右上角的個人設定檔選單](images/zh-TW/profile-box.png)
 
-![設定頁：設定檔匯出與匯入](images/settings-tab.png)
+![設定頁：設定檔匯出與匯入](images/zh-TW/settings-tab.png)
 
 ## 每個設定檔各自擁有
 

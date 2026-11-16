@@ -6,13 +6,13 @@ Back to the [README](../README.md)
 
 Combine a song version or your own recording with subtitles and images, and export an MP4. For example, record yourself singing, pick a few images, and turn it into a finished MV.
 
-![MV export](images/mv-export.png)
+![MV export](images/en/mv-export.png)
 
-<sub>Demo song: Amazing Grace (public domain, see [asset credits](ASSET_CREDITS.md)). The screenshot shows the Traditional Chinese UI.</sub>
+<sub>Demo song: Amazing Grace (public domain, see [asset credits](ASSET_CREDITS.md)).</sub>
 
 A sample frame of the result (the current and next lines are shown; background images are cropped to fill the frame):
 
-![Sample MV frame](images/mv-frame.png)
+![Sample MV frame](images/en/mv-frame.png)
 
 ## Where to find it
 

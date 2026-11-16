@@ -6,9 +6,9 @@ Back to the [README](../README.md)
 
 Tap Space along with the music to turn plain-text lyrics into a line-by-line LRC, or re-time an existing LRC, including one downloaded from LRCLIB. Timing is per line; no per-word timing is needed.
 
-![Lyric timing editor](images/lyric-timing.png)
+![Lyric timing editor](images/en/lyric-timing.png)
 
-<sub>Demo song: Amazing Grace (public domain, see [asset credits](ASSET_CREDITS.md)). The screenshot shows the Traditional Chinese UI.</sub>
+<sub>Demo song: Amazing Grace (public domain, see [asset credits](ASSET_CREDITS.md)).</sub>
 
 ## Where to find it
 

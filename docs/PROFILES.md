@@ -6,9 +6,9 @@ Back to the [README](../README.md)
 
 Add or switch profiles at the top right so each person (or purpose) keeps their own settings while sharing one song library.
 
-![The profile selector at the top right](images/profile-box.png)
+![The profile selector at the top right](images/en/profile-box.png)
 
-![Settings: import / export of profiles](images/settings-tab.png)
+![Settings: import / export of profiles](images/en/settings-tab.png)
 
 ## What each profile keeps
 

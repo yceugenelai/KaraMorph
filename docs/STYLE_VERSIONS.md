@@ -6,7 +6,7 @@ Back to the [README](../README.md)
 
 Turn the same song into a different style, such as lounge jazz, and keep the result as a new version that you can add to a playlist like the original.
 
-![The new-version dialog](images/version-dialog.png)
+![The new-version dialog](images/en/version-dialog.png)
 
 ## Steps
 

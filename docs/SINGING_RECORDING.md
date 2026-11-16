@@ -6,9 +6,9 @@ Back to the [README](../README.md)
 
 Build your own playlist, record your whole performance with a microphone while you sing, then listen back or turn it into an [MV](MV_EXPORT.md).
 
-![The Sing tab playlist](images/sing-tab.png)
+![The Sing tab playlist](images/en/sing-tab.png)
 
-![The singing view](images/karaoke-window.png)
+![The singing view](images/en/karaoke-window.png)
 
 ## Playlists
 

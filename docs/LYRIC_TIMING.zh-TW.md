@@ -6,9 +6,9 @@
 
 跟著音樂按空白鍵，就能把只有文字的歌詞變成逐句的 LRC；也能重新校正現有的 LRC，包含從 LRCLIB 抓下來的。以「句」為單位，不需要逐字對時間。
 
-![歌詞調整](images/lyric-timing.png)
+![歌詞調整](images/zh-TW/lyric-timing.png)
 
-<sub>示範曲：Amazing Grace（公有領域，見[素材聲明](ASSET_CREDITS.md)）。畫面為繁體中文介面。</sub>
+<sub>示範曲：Amazing Grace（公有領域，見[素材聲明](ASSET_CREDITS.md)）。</sub>
 
 ## 開啟方式
 

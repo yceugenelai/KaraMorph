@@ -6,7 +6,7 @@
 
 歌詞可以自動搜尋、手動輸入，或匯入自己的 LRC；有 LRC 時唱歌畫面會逐句同步顯示。沒有歌詞也能播放。
 
-![素材 → 歌詞：來源選擇與各分頁](images/lyrics-local.png)
+![素材 → 歌詞：來源選擇與各分頁](images/zh-TW/lyrics-local.png)
 
 ## 取得歌詞
 

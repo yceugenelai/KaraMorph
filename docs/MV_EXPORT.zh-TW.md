@@ -6,13 +6,13 @@
 
 選一個歌曲版本或自己的錄音，搭配字幕與圖片，輸出成 MP4。例如唱完歌後找幾張圖，就能做成成品 MV。
 
-![MV 匯出](images/mv-export.png)
+![MV 匯出](images/zh-TW/mv-export.png)
 
-<sub>示範曲：Amazing Grace（公有領域，見[素材聲明](ASSET_CREDITS.md)）。畫面為繁體中文介面。</sub>
+<sub>示範曲：Amazing Grace（公有領域，見[素材聲明](ASSET_CREDITS.md)）。</sub>
 
 成品畫面範例（字幕為目前句與下一句，背景圖會自動裁切填滿畫面）：
 
-![MV 畫面範例](images/mv-frame.png)
+![MV 畫面範例](images/zh-TW/mv-frame.png)
 
 ## 開啟方式
 

@@ -6,9 +6,9 @@
 
 建立專屬歌單，唱歌時用麥克風錄下整首演唱，之後可以試聽，或做成 [MV](MV_EXPORT.zh-TW.md)。
 
-![「唱歌」頁的歌單](images/sing-tab.png)
+![「唱歌」頁的歌單](images/zh-TW/sing-tab.png)
 
-![唱歌畫面](images/karaoke-window.png)
+![唱歌畫面](images/zh-TW/karaoke-window.png)
 
 ## 歌單
 

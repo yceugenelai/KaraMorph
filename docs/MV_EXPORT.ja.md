@@ -6,13 +6,13 @@
 
 曲のバージョンや自分の録音に、字幕と画像を合わせて MP4 に書き出します。たとえば歌を録音したあとに画像を選べば、完成した MV になります。
 
-![MV の書き出し](images/mv-export.png)
+![MV の書き出し](images/ja/mv-export.png)
 
-<sub>デモ曲：Amazing Grace（パブリックドメイン、[素材クレジット](ASSET_CREDITS.md)参照）。画面は繁体字中国語の UI です。</sub>
+<sub>デモ曲：Amazing Grace（パブリックドメイン、[素材クレジット](ASSET_CREDITS.md)参照）。</sub>
 
 仕上がりの1コマ（現在の行と次の行を表示。背景画像は画面いっぱいになるようにトリミングされます）：
 
-![MV のサンプルフレーム](images/mv-frame.png)
+![MV のサンプルフレーム](images/ja/mv-frame.png)
 
 ## 開き方
 

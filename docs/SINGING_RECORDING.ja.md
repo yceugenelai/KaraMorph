@@ -6,9 +6,9 @@
 
 自分だけのプレイリストを作り、歌唱中にマイクで曲全体を録音できます。あとで聴き直したり、[MV](MV_EXPORT.ja.md) にしたりできます。
 
-![「歌う」タブのプレイリスト](images/sing-tab.png)
+![「歌う」タブのプレイリスト](images/ja/sing-tab.png)
 
-![歌唱画面](images/karaoke-window.png)
+![歌唱画面](images/ja/karaoke-window.png)
 
 ## プレイリスト
 
