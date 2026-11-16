@@ -25,6 +25,20 @@ def motion_rect(width, height, image_width, image_height, elapsed_ms, scene=0):
     return QRectF((width - w) / 2 + dx, (height - h) / 2 + dy, w, h)
 
 
+def drift_rect(width, height, image_width, image_height, fraction, seed=0):
+    """Slow zoom in/out plus a pan; the image always covers the viewport (no gaps)."""
+    rng = random.Random(seed * 7919 + 13)
+    zoom_in = rng.random() < 0.5
+    amount = rng.uniform(0.08, 0.14)
+    pan_x, pan_y = rng.uniform(-1, 1), rng.uniform(-1, 1)
+    p = min(1.0, max(0.0, fraction))
+    zoom = 1.0 + amount * (p if zoom_in else 1.0 - p)
+    w, h = image_width * zoom, image_height * zoom
+    slack_x, slack_y = max(0.0, (w - width) / 2), max(0.0, (h - height) / 2)
+    return QRectF((width - w) / 2 - pan_x * slack_x * (2 * p - 1) * 0.8,
+                  (height - h) / 2 - pan_y * slack_y * (2 * p - 1) * 0.8, w, h)
+
+
 class KaraokeCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -42,6 +56,7 @@ class KaraokeCanvas(QWidget):
         # Appearance hooks used by the MV exporter; defaults match the live karaoke view.
         self.no_image_text = "no images"
         self.font_scale = 1.0
+        self.drift = None  # (fraction through the scene, seed) turns on the MV zoom/pan motion
         self.fill_background = False  # crop to fill the frame instead of letterboxing
         self.ui_scale = None  # set for resolution-independent sizing (1.0 = 1280x720 look)
         self.center_ratio = 5 / 6
@@ -76,7 +91,11 @@ class KaraokeCanvas(QWidget):
                     Qt.TransformationMode.SmoothTransformation)
                 self._background_key = key
             scaled = self._scaled_background
-            if self.motion_enabled:
+            if self.drift is not None:
+                target = drift_rect(rect.width(), rect.height(), scaled.width(), scaled.height(), *self.drift)
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                painter.drawPixmap(target, scaled, QRectF(scaled.rect()))
+            elif self.motion_enabled:
                 target = motion_rect(rect.width(), rect.height(), scaled.width(), scaled.height(),
                                      self.motion_ms, self.scene)
                 painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)

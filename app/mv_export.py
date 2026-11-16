@@ -127,7 +127,8 @@ def scene_state(scenes: list[Scene], position_ms: int, fade_ms: int):
 # ----- rendering -----
 class MvRenderer:
     def __init__(self, size, scenes, timeline, speed=1.0, delay_ms=0, song_offset_ms=0,
-                 fade_ms=1000, font_scale=1.3, center_ratio=5 / 6, color='#ffffff'):
+                 fade_ms=1000, font_scale=1.3, center_ratio=5 / 6, color='#ffffff', motion=False, seed=0,
+                 song_map=None, song_rate=1.0, shift_ms=0):
         self.width, self.height = size
         self.scenes, self.timeline = scenes, timeline
         self.speed, self.delay_ms, self.song_offset_ms, self.fade_ms = speed, delay_ms, song_offset_ms, fade_ms
@@ -140,6 +141,14 @@ class MvRenderer:
         self.canvas.font_scale, self.canvas.center_ratio, self.canvas.highlight_color = font_scale, center_ratio, color
         self.canvas.synced = timeline is not None
         self.canvas.lines = list(timeline.lines) if timeline else []
+        self.motion, self.seed = motion, seed
+        # How the take's clock maps to the song's: a recorded position map when the take has one
+        # (it follows live tempo changes), otherwise a constant rate from a known start.
+        self.song_rate, self.shift_ms = song_rate, shift_ms
+        self.song_map = None
+        if song_map and len(song_map) >= 2:
+            self.song_map = (np.array([m[0] for m in song_map], dtype=float),
+                             np.array([m[1] for m in song_map], dtype=float))
         self._pixmaps = {}
         self._last = (None, None)
 
@@ -153,8 +162,11 @@ class MvRenderer:
             self._pixmaps[path] = None if pixmap.isNull() else pixmap
         return self._pixmaps[path]
 
-    def _draw(self, scene_index, progress) -> QImage:
-        self.canvas.background = self._pixmap(self.scenes[scene_index].image) if self.scenes else None
+    def _draw(self, scene_index, progress, position=0) -> QImage:
+        scene = self.scenes[scene_index]
+        self.canvas.drift = ((position - scene.start) / max(1, scene.end - scene.start),
+                             scene_index + self.seed * 101) if self.motion else None
+        self.canvas.background = self._pixmap(scene.image)
         self.canvas.scene = scene_index
         self.canvas.progress = progress
         image = QImage(self.width, self.height, QImage.Format.Format_RGB32)
@@ -163,17 +175,18 @@ class MvRenderer:
         return image
 
     def frame(self, position_ms: int) -> QImage:
-        progress = (self.timeline.index_at(position_ms + self.song_offset_ms, self.speed, self.delay_ms)
+        progress = (self.timeline.index_at(self.song_position(position_ms), self.speed, self.delay_ms)
                     if self.timeline else -1)
         if not self.scenes:
             return self._blank(progress)
         index, previous, blend = scene_state(self.scenes, position_ms, self.fade_ms)
-        key = (index, previous, round(blend * 30) if previous is not None else 1, progress)
+        key = (index, previous, round(blend * 30) if previous is not None else 1, progress,
+               position_ms if self.motion else None)
         if key == self._last[0]:
             return self._last[1]
-        image = self._draw(index, progress)
+        image = self._draw(index, progress, position_ms)
         if previous is not None:
-            base = self._draw(previous, progress)
+            base = self._draw(previous, progress, position_ms)
             painter = QPainter(base)
             painter.setOpacity(blend)
             painter.drawImage(0, 0, image)
@@ -182,8 +195,19 @@ class MvRenderer:
         self._last = (key, image)
         return image
 
+    def song_position(self, position_ms) -> int:
+        """Where in the song's own timeline the take's moment `position_ms` was."""
+        moment = position_ms + self.shift_ms
+        if self.song_map is None:
+            return round(self.song_offset_ms + moment * self.song_rate)
+        xs, ys = self.song_map
+        if moment > xs[-1]:  # past the last sample: keep going at the last measured pace
+            pace = (ys[-1] - ys[-2]) / max(1.0, xs[-1] - xs[-2])
+            return round(ys[-1] + (moment - xs[-1]) * pace)
+        return round(float(np.interp(moment, xs, ys)))
+
     def _blank(self, progress):
-        self.canvas.background, self.canvas.scene, self.canvas.progress = None, 0, progress
+        self.canvas.background, self.canvas.scene, self.canvas.progress, self.canvas.drift = None, 0, progress, None
         image = QImage(self.width, self.height, QImage.Format.Format_RGB32)
         self.canvas.render(image)
         return image

@@ -339,7 +339,10 @@ class ExclusivePlayer(QObject):
                     self.capture_overflow = True
                 else:
                     # Save dry microphone and the exact stretched backing on the same clock.
-                    self.capture.append((inputs[:, 0].copy(), backing.copy()))
+                    # The third item is where in the source this block came from, so a take keeps
+                    # the real song position even when the live tempo changed.
+                    self.capture.append((inputs[:, 0].copy(), backing.copy(),
+                                         source_start if self.renderer else start))
             if self.mic.monitor_enabled:
                 for channel in range(self.channels):
                     np.multiply(inputs[:, 0], self.mic.monitor_volume, out=scratch[:, channel])

@@ -15,7 +15,6 @@ from app.karaoke_assets import read_lyrics, save_lyrics, shared_images_dir, song
 from app.lyrics import assets_dir, load_lyric_state, parse_lrc, save_lyric_state
 from app.image_assets_widget import ImageAssetsWidget
 from app.lyrics_sync import LyricSyncEditor
-from app.mv_export_widget import MvExportWidget
 
 
 class LyricsDialog(QDialog):
@@ -133,10 +132,6 @@ class LyricsDialog(QDialog):
         self.shared_images.local_tab_index = 2
         self.shared_images.hide()
         self.tabs.addTab(self.images, t('圖片'))
-        self.mv = MvExportWidget(controller, song_id)
-        self.tabs.addTab(self.mv, t('MV 匯出'))
-        self.tabs.currentChanged.connect(lambda _: self.mv.refresh() if self.tabs.currentWidget() is self.mv else None)
-        self.finished.connect(self.mv.dispose)
         for index, title, path in [(0, t('歌曲圖片資料夾'), song_images_dir(self.workspace, song_id)),
                                   (2, t('共用圖片資料夾'), shared_images_dir(self.workspace))]:
             button = QPushButton(title)

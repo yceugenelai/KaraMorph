@@ -1,12 +1,15 @@
 """MV export tab: pick a version or take, arrange images over time, render to MP4."""
 
 import re
+import shutil
+import tempfile
 from pathlib import Path
 
 import soundfile as sf
-from PySide6.QtCore import QSize, QTimer, Qt, Signal
+from PySide6.QtCore import QSize, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaPlayer
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QHeaderView, QLabel, QListWidget, QListWidgetItem, QMessageBox, QProgressBar,
     QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -96,6 +99,17 @@ class MvExportWidget(QWidget):
         self.sources, self.images = [], []
         self.timeline, self.speed, self.delay, self.lyric_message = None, 1.0, 0, ''
         self.job, self._renderer, self._building, self._key = None, None, False, None
+        self._audio_cache, self._mix_count, self._play_dir = {}, 0, None
+        self.player = QMediaPlayer(self)
+        self.player_output = QAudioOutput(self)
+        self.player.setAudioOutput(self.player_output)
+        self.player.mediaStatusChanged.connect(self._player_status)
+        self.play_timer = QTimer(self)
+        self.play_timer.setInterval(50)
+        self.play_timer.timeout.connect(self._follow_player)
+        self.restart_timer = QTimer(self)
+        self.restart_timer.setSingleShot(True)
+        self.restart_timer.timeout.connect(self._restart_playback)
         self.preview_timer = QTimer(self)
         self.preview_timer.setSingleShot(True)
         self.preview_timer.timeout.connect(self._draw_preview)
@@ -125,6 +139,24 @@ class MvExportWidget(QWidget):
         self.mix_label2 = QLabel(t('伴奏'))
         mix.addWidget(self.mix_label2)
         mix.addWidget(self.backing_gain)
+        self.offset_label = QLabel(t('伴奏偏移'))
+        self.offset = QSpinBox()
+        self.offset.setRange(-3000, 3000)
+        self.offset.setSingleStep(50)
+        self.offset.setSuffix(' ms')
+        self.offset.setToolTip(t('與「處理歌曲」的錄音對齊相同：數值越大，伴奏相對人聲越晚出現；字幕會跟著伴奏。'))
+        mix.addWidget(self.offset_label)
+        mix.addWidget(self.offset)
+        self.rate_label = QLabel(t('錄音當時的播放速度'))
+        self.rate = QDoubleSpinBox()
+        self.rate.setRange(0.5, 1.5)
+        self.rate.setSingleStep(0.05)
+        self.rate.setDecimals(2)
+        self.rate.setValue(1.0)
+        self.rate.setSuffix('×')
+        self.rate.setToolTip(t('這次錄音沒有記錄歌曲位置（舊版錄音）。若當時在唱歌畫面調慢或調快，請在此填入同樣的速度，字幕才會對上。'))
+        mix.addWidget(self.rate_label)
+        mix.addWidget(self.rate)
         mix.addStretch(1)
         layout.addLayout(mix)
         self.lyric_info = QLabel()
@@ -138,8 +170,15 @@ class MvExportWidget(QWidget):
         self.bar = SceneBar()
         self.bar.seekRequested.connect(self.seek)
         layout.addWidget(self.bar)
+        play_row = QHBoxLayout()
+        self.play_button = QPushButton(t('▶ 試聽'))
+        self.play_button.setToolTip(t('從預覽位置開始播放目前的混音（含人聲／伴奏音量與偏移），字幕同步預覽。'))
+        self.play_button.clicked.connect(self.toggle_playback)
         self.clock = QLabel('00:00.00')
-        layout.addWidget(self.clock)
+        play_row.addWidget(self.play_button)
+        play_row.addWidget(self.clock)
+        play_row.addStretch(1)
+        layout.addLayout(play_row)
 
         layout.addWidget(QLabel(t('圖片分段：預設整首「自動輪播」；在預覽位置切段後，可替該段指定固定圖片。')))
         self.table = QTableWidget(0, 2)
@@ -164,6 +203,10 @@ class MvExportWidget(QWidget):
         self.pool.setMaximumHeight(110)
         self.pool.itemChanged.connect(lambda *_: self._replan())
         layout.addWidget(QLabel(t('自動輪播使用的圖片（來自本歌曲與共用圖片資料夾，需已儲存）')))
+        self.use_shared = QCheckBox(t('自動輪播包含共用圖片'))
+        self.use_shared.setChecked(False)
+        self.use_shared.toggled.connect(self._shared_toggled)
+        layout.addWidget(self.use_shared)
         layout.addWidget(self.pool)
 
         form = QFormLayout()
@@ -190,11 +233,17 @@ class MvExportWidget(QWidget):
                               (t('字幕位置'), self.pos), (t('目前句顏色'), self.color)]:
             form.addRow(label, widget)
         layout.addLayout(form)
-        for widget in (self.interval, self.fade, self.vocal_gain, self.backing_gain):
+        for widget in (self.interval, self.fade, self.vocal_gain, self.backing_gain, self.offset, self.rate):
             widget.valueChanged.connect(lambda *_: self._invalidate())
         for combo in (self.size, self.pos, self.color):
             combo.currentIndexChanged.connect(lambda *_: self._invalidate())
         self.interval.valueChanged.connect(lambda *_: self._replan())
+        self.motion = QCheckBox(t('圖片隨機緩慢移動／放大縮小'))
+        self.motion.setChecked(True)
+        self.motion.toggled.connect(lambda *_: self._invalidate())
+        form.addRow(t('圖片動態'), self.motion)
+        for widget in (self.vocal_gain, self.backing_gain, self.offset):
+            widget.valueChanged.connect(lambda *_: self.restart_timer.start(400))
 
         self.progress = QProgressBar()
         self.progress.setVisible(False)
@@ -229,8 +278,9 @@ class MvExportWidget(QWidget):
         checked = {self.pool.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.pool.count())
                    if self.pool.item(i).checkState() == Qt.CheckState.Checked}
         known = {self.pool.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.pool.count())}
-        self.images = image_files(song_images_dir(self.workspace, self.song_id)) + \
-            image_files(shared_images_dir(self.workspace))
+        shared_dir = shared_images_dir(self.workspace) if self.song_id else None
+        own = image_files(song_images_dir(self.workspace, self.song_id)) if self.song_id else []
+        self.images = own + (image_files(shared_dir) if shared_dir else [])
         self.pool.clear()
         for path in self.images:
             item = QListWidgetItem(path.name)
@@ -241,7 +291,9 @@ class MvExportWidget(QWidget):
             icon = QPixmap(str(path))
             if not icon.isNull():
                 item.setIcon(QIcon(icon.scaled(96, 54, Qt.AspectRatioMode.KeepAspectRatio)))
+            item.setData(Qt.ItemDataRole.UserRole + 1, shared_dir in path.parents)
             self.pool.addItem(item)
+        self._apply_shared_filter()
         self._building = False
         key = (self.current() or {}).get('key')
         self._load_source(key == self._key)
@@ -250,8 +302,18 @@ class MvExportWidget(QWidget):
     def _profile(self):
         return getattr(getattr(self.controller, 'profiles', None), 'active', None)
 
+    def set_song(self, song_id):
+        if self.job or song_id == self.song_id:
+            return
+        self._stop_playback()
+        self.song_id, self.song = song_id, self.controller.song_map.get(song_id, {})
+        self.seed, self._key = 0, None
+        self.refresh()
+
     def _find_sources(self):
         sources = []
+        if not self.song_id or self.song_id not in self.controller.song_map:
+            return sources
 
         def add_version(variant_id, label):
             path = resolve_item({'song_id': self.song_id, 'variant_id': variant_id, 'label': ''},
@@ -299,8 +361,11 @@ class MvExportWidget(QWidget):
             return
         source = self.current()
         recording = bool(source and source['kind'] == 'recording')
-        for widget in (self.mix_label, self.vocal_gain, self.mix_label2, self.backing_gain):
+        for widget in (self.mix_label, self.vocal_gain, self.mix_label2, self.backing_gain, self.offset_label, self.offset):
             widget.setVisible(recording)
+        needs_rate = bool(recording and not source['take'].get('song_position_map'))
+        for widget in (self.rate_label, self.rate):
+            widget.setVisible(needs_rate)
         self.timeline, self.speed, self.delay, self.lyric_message = None, 1.0, 0, ''
         self.duration = 1
         if source:
@@ -325,6 +390,9 @@ class MvExportWidget(QWidget):
         if keep_segments:
             self._replan()
             return
+        self._stop_playback()
+        self.offset.setValue(0)
+        self.rate.setValue(1.0)
         self.position = 0
         self._key = (source or {}).get('key')
         self._set_table_default()
@@ -387,9 +455,18 @@ class MvExportWidget(QWidget):
         if not self._building and item.column() == 0:
             self._replan()
 
+    def _apply_shared_filter(self):
+        for i in range(self.pool.count()):
+            item = self.pool.item(i)
+            item.setHidden(bool(item.data(Qt.ItemDataRole.UserRole + 1)) and not self.use_shared.isChecked())
+
+    def _shared_toggled(self, _checked):
+        self._apply_shared_filter()
+        self._replan()
+
     def pool_images(self):
         return [Path(self.pool.item(i).data(Qt.ItemDataRole.UserRole)) for i in range(self.pool.count())
-                if self.pool.item(i).checkState() == Qt.CheckState.Checked]
+                if self.pool.item(i).checkState() == Qt.CheckState.Checked and not self.pool.item(i).isHidden()]
 
     def _replan(self):
         if self._building:
@@ -402,6 +479,8 @@ class MvExportWidget(QWidget):
     # ----- preview -----
     def seek(self, ms):
         self.position = max(0, min(self.duration, int(ms)))
+        if self.play_timer.isActive():
+            self.player.setPosition(self.position)
         self.bar.set_position(self.position)
         self.clock.setText(format_time(self.position))
         self.preview_timer.start(60)
@@ -415,7 +494,10 @@ class MvExportWidget(QWidget):
         take = source['take'] if source and source['kind'] == 'recording' else {}
         return MvRenderer(size, self.scenes, self.timeline, self.speed, self.delay,
                           int(take.get('playback_start_offset_ms', 0)), round(self.fade.value() * 1000),
-                          self.size.currentData(), self.pos.currentData(), self.color.currentData())
+                          self.size.currentData(), self.pos.currentData(), self.color.currentData(),
+                          self.motion.isChecked(), self.seed,
+                          song_map=take.get('song_position_map'), song_rate=self.rate.value() if take else 1.0,
+                          shift_ms=self.offset.value() if take else 0)
 
     def _draw_preview(self):
         if not hasattr(self, 'scenes') or self.job:
@@ -443,16 +525,11 @@ class MvExportWidget(QWidget):
             return
         if not filename.lower().endswith('.mp4'):
             filename += '.mp4'
+        self._stop_playback()
         self.status.setText(t('正在準備音訊…'))
         self.export_button.setEnabled(False)
         try:
-            if source['kind'] == 'recording':
-                take = source['take']
-                backing = self._backing_for(take)
-                audio = mix_recording(decode_audio(take['audio_path']), decode_audio(backing[0]), backing[1],
-                                      self.vocal_gain.value(), self.backing_gain.value())
-            else:
-                audio = decode_audio(source['path'])
+            audio = self._build_audio(source)
             if not len(audio):
                 raise ValueError(t('音訊內容是空的'))
             renderer = self.make_renderer(RESOLUTIONS[self.resolution.currentData()])
@@ -468,6 +545,83 @@ class MvExportWidget(QWidget):
         self.cancel_button.setEnabled(True)
         self.status.setText(t('正在輸出影片…'))
         self.job.start()
+
+    def _decoded(self, path):
+        key = str(path)
+        if key not in self._audio_cache:
+            if len(self._audio_cache) >= 3:
+                self._audio_cache.pop(next(iter(self._audio_cache)))
+            self._audio_cache[key] = decode_audio(path)
+        return self._audio_cache[key]
+
+    def _build_audio(self, source):
+        if source['kind'] != 'recording':
+            return self._decoded(source['path'])
+        take = source['take']
+        backing = self._backing_for(take)
+        return mix_recording(self._decoded(take['audio_path']), self._decoded(backing[0]),
+                             backing[1] + self.offset.value(), self.vocal_gain.value(), self.backing_gain.value())
+
+    # ----- listening -----
+    def toggle_playback(self):
+        if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self._stop_playback()
+        else:
+            self._start_playback()
+
+    def _start_playback(self):
+        source = self.current()
+        if not source or self.job:
+            return
+        stop = getattr(self.controller, '_stop_preview', None)
+        if stop:
+            stop()
+        try:
+            audio = self._build_audio(source)
+            if self._play_dir is None:
+                self._play_dir = Path(tempfile.mkdtemp(prefix='karamorph-mvlisten-'))
+            self._mix_count += 1
+            wav = self._play_dir / f'listen-{self._mix_count}.wav'
+            sf.write(str(wav), audio, 44100, subtype='PCM_16')
+        except (OSError, RuntimeError, ValueError, sf.LibsndfileError) as error:
+            self.status.setText(t('試聽失敗：{p0}', p0=error))
+            return
+        self.player.setSource(QUrl())
+        for old in self._play_dir.glob('listen-*.wav'):
+            if old != wav:
+                old.unlink(missing_ok=True)
+        box = getattr(self.controller, 'audio_device', None)
+        device = (box.currentData() if box is not None else None) or QMediaDevices.defaultAudioOutput()
+        self.player_output.setDevice(device)
+        self.player_output.setVolume(1.0)
+        self.player.setSource(QUrl.fromLocalFile(str(wav)))
+        self.player.setPosition(self.position)
+        self.player.play()
+        self.play_button.setText(t('■ 停止試聽'))
+        self.play_timer.start()
+
+    def _stop_playback(self):
+        self.restart_timer.stop()
+        self.play_timer.stop()
+        self.player.stop()
+        self.play_button.setText(t('▶ 試聽'))
+
+    def _restart_playback(self):
+        """Parameters changed while listening: rebuild the mix and continue from the same spot."""
+        if self.play_timer.isActive():
+            self.position = self.player.position()
+            self._stop_playback()
+            self._start_playback()
+
+    def _follow_player(self):
+        self.position = max(0, min(self.duration, self.player.position()))
+        self.bar.set_position(self.position)
+        self.clock.setText(format_time(self.position))
+        self.preview_timer.start(0)
+
+    def _player_status(self, status):
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self._stop_playback()
 
     def _backing_for(self, take):
         """(path, offset_ms of the backing relative to the take) — same rule as take preview."""
@@ -502,5 +656,9 @@ class MvExportWidget(QWidget):
 
     def dispose(self):
         self.preview_timer.stop()
+        self._stop_playback()
+        self.player.setSource(QUrl())
+        if self._play_dir:
+            shutil.rmtree(self._play_dir, ignore_errors=True)
         if self.job:
             self.job.cancel()

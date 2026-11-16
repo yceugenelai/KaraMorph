@@ -41,6 +41,27 @@ class SceneTests(unittest.TestCase):
         self.assertAlmostEqual(float(mixed[20, 0]), .5)
         self.assertEqual(len(mixed), 100)
 
+    def test_song_position_follows_recorded_tempo_map_or_constant_rate(self):
+        slow = MvRenderer((64, 36), [], None, song_map=[[0, 1000], [1000, 1800], [2000, 2600], [3000, 3400]])
+        self.assertEqual(slow.song_position(0), 1000)
+        self.assertEqual(slow.song_position(1500), 2200)  # slower than real time: song advanced 0.6-0.8 s per s
+        self.assertEqual(slow.song_position(4000), 4200)   # last pace continues past the final sample
+        shifted = MvRenderer((64, 36), [], None, song_map=[[0, 1000], [1000, 1800]], shift_ms=500)
+        self.assertEqual(shifted.song_position(0), 1400)
+        constant = MvRenderer((64, 36), [], None, song_offset_ms=100, song_rate=0.8, shift_ms=50)
+        self.assertEqual(constant.song_position(1000), 940)
+
+    def test_drift_always_covers_the_frame_and_moves(self):
+        from app.karaoke_window import drift_rect
+        for seed in range(6):
+            rects = [drift_rect(640, 360, 640, 360, f / 10, seed) for f in range(11)]
+            for rect in rects:
+                self.assertLessEqual(rect.left(), 0.001)
+                self.assertLessEqual(rect.top(), 0.001)
+                self.assertGreaterEqual(rect.right(), 639.999)
+                self.assertGreaterEqual(rect.bottom(), 359.999)
+            self.assertNotEqual(rects[0], rects[-1])
+
 
 class EncodeTests(unittest.TestCase):
     @classmethod
@@ -125,6 +146,53 @@ class WidgetTests(unittest.TestCase):
             widget.add_cut()
             self.assertEqual(len(widget.segments()), 2)
             widget.delete_cut()
+            widget.dispose()
+            controller.close()
+
+    def test_shared_images_option_offset_and_motion_frames(self):
+        from app.karaoke_assets import shared_images_dir, song_images_dir
+        from app.lyrics import assets_dir
+        from app.mv_export_widget import MvExportWidget
+        import json
+        import soundfile as sf
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for target in (song_images_dir(root, 'song') / 'own.png', shared_images_dir(root) / 'shared.png'):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                image = QImage(64, 36, QImage.Format.Format_RGB32)
+                image.fill(QColor('blue'))
+                for x in range(0, 64, 8):
+                    for y in range(36):
+                        image.setPixelColor(x, y, QColor('white'))
+                image.save(str(target))
+            sf.write(str(root / 'song.wav'), np.zeros((RATE * 3, 2), dtype=np.float32), RATE)
+            take = assets_dir(root, 'song').parent / 'recordings' / 'r1'
+            take.mkdir(parents=True)
+            sf.write(str(take / 'microphone.wav'), np.zeros((RATE, 2), dtype=np.float32), RATE)
+            (take / 'session.json').write_text(json.dumps(dict(song_id='song', session_id='r1', profile='default',
+                started_at='2026-01-01T00:00:00', duration_ms=1000, playback_start_offset_ms=100,
+                variant_id='original')), encoding='utf-8')
+            controller = QWidget()
+            controller.workspace = root
+            controller.song_map = {'song': {'title': 'T', 'path': str(root / 'song.wav'), 'available': True}}
+            widget = MvExportWidget(controller, 'song')
+            self.assertFalse(widget.use_shared.isChecked())
+            self.assertEqual({p.name for p in widget.pool_images()}, {'own.png'})
+            self.assertEqual({s.image.name for s in widget.scenes if s.image}, {'own.png'})
+            widget.use_shared.setChecked(True)
+            self.assertIn('shared.png', {p.name for p in widget.pool_images()})
+            widget.use_shared.setChecked(False)
+            widget.source.setCurrentIndex(widget.source.count() - 1)
+            self.assertTrue(widget.offset.isVisible() or not widget.isVisible())
+            widget.offset.setValue(250)
+            self.assertEqual(widget.make_renderer((320, 180)).song_position(0), 350)
+            audio = widget._build_audio(widget.current())
+            self.assertEqual(len(audio), RATE)
+            widget.motion.setChecked(True)
+            renderer = widget.make_renderer((160, 90))
+            self.assertTrue(renderer.motion)
+            first, later = renderer.frame(100).copy(), renderer.frame(1800)
+            self.assertNotEqual(first, later)
             widget.dispose()
             controller.close()
 
