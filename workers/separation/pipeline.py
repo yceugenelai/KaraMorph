@@ -10,11 +10,12 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from audio_ops import convert_to_wav, separate_stems
+from safe_names import session_folder_name
 from config import OUTPUT_ROOT, ROFORMER_MODEL, ROFORMER_MODEL_DIR
 
 
 def run_pipeline(input_path: Path, max_duration: float | None = None, on_stage=None, estimate_bpm: bool = True) -> dict:
-    session_name = input_path.stem
+    session_name = session_folder_name(input_path.stem)
     if max_duration is not None:
         session_name += f"_{int(max_duration)}s"  # keep test runs out of the full run's output dir
     session_dir = OUTPUT_ROOT / session_name
