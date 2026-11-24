@@ -52,16 +52,19 @@ class ModelsDialog(QDialog):
         layout.addWidget(intro)
         self.separation = QCheckBox(t('人聲分離：Kim Mel-Band RoFormer（MIT）'))
         self.styling = QCheckBox(t('風格轉換：ACE-Step（MIT）＋ Qwen embedding（Apache-2.0）'))
+        self.depth = QCheckBox(t('背景深度動畫：Depth Anything V2 Small（Apache-2.0）'))
         self.separation.setChecked(True)
         self.styling.setChecked(True)
         layout.addWidget(self.separation)
         layout.addWidget(self.styling)
+        layout.addWidget(self.depth)
         self.details = QLabel()
         self.details.setWordWrap(True)
         self.details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.details)
         self.separation.toggled.connect(self.refresh)
         self.styling.toggled.connect(self.refresh)
+        self.depth.toggled.connect(self.refresh)
         self.soundtouch_status = QLabel()
         self.soundtouch_status.setWordWrap(True)
         layout.addWidget(self.soundtouch_status)
@@ -97,7 +100,7 @@ class ModelsDialog(QDialog):
         self.refresh()
 
     def groups(self):
-        return ([g for g, box in [('separation', self.separation), ('styling', self.styling)] if box.isChecked()])
+        return ([g for g, box in [('separation', self.separation), ('styling', self.styling), ('depth', self.depth)] if box.isChecked()])
 
     def refresh(self, *_):
         state = t('已準備') if soundtouch.ready() else t('尚未準備')
@@ -108,7 +111,8 @@ class ModelsDialog(QDialog):
         free = shutil.disk_usage(ROOT).free / 2**30
         names = []
         for group, title, runtime_key in [('separation', t('分離人聲'), 'roformer_python'),
-                                           ('styling', t('製作風格'), 'acestep_python')]:
+                                           ('styling', t('製作風格'), 'acestep_python'),
+                                           ('depth', t('背景深度動畫'), 'acestep_python')]:
             state = t('已準備') if store.ready(group) else t('尚未準備')
             if runtime(self.controller.settings, runtime_key) is None:
                 state += ' · ' + t('執行元件缺失，請從「設定 → 管理安裝」準備所需元件')
@@ -151,7 +155,7 @@ class ModelsDialog(QDialog):
                     QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
         self.worker = Preparation(self.controller.settings, self.groups(), mode, import_root, self)
-        for control in self.actions + [self.separation, self.styling]:
+        for control in self.actions + [self.separation, self.styling, self.depth]:
             control.setEnabled(False)
         self.cancel.setEnabled(True)
         self.started = time.monotonic()
@@ -186,7 +190,7 @@ class ModelsDialog(QDialog):
     def on_finished(self):
         self.worker.deleteLater()
         self.worker = None
-        for control in self.actions + [self.separation, self.styling]:
+        for control in self.actions + [self.separation, self.styling, self.depth]:
             control.setEnabled(True)
         self.cancel.setEnabled(False)
         self.refresh()

@@ -4,10 +4,11 @@ from app.i18n import t
 from pathlib import Path
 import math
 import random
+import time
 
 import numpy as np
 from PySide6.QtCore import QElapsedTimer, QEvent, QRectF, QSize, QTimer, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPixmap
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QSizePolicy, QSlider, QSpinBox, QVBoxLayout, QWidget, QWidgetAction
 from PySide6.QtMultimedia import QMediaPlayer
 from app.ui_icons import icon
@@ -39,6 +40,20 @@ def drift_rect(width, height, image_width, image_height, fraction, seed=0):
                   (height - h) / 2 - pan_y * slack_y * (2 * p - 1) * 0.8, w, h)
 
 
+def depth_mask_pixmap(path):
+    """Convert a grayscale depth-motion mask to an alpha pixmap."""
+    source = QPixmap(str(path))
+    if source.isNull():
+        return None
+    gray = source.toImage().convertToFormat(QImage.Format.Format_Grayscale8)
+    alpha = np.frombuffer(gray.constBits(), dtype=np.uint8, count=gray.sizeInBytes()).reshape(
+        gray.height(), gray.bytesPerLine())[:, :gray.width()]
+    rgba = np.full((gray.height(), gray.width(), 4), 255, dtype=np.uint8)
+    rgba[:, :, 3] = alpha
+    return QPixmap.fromImage(QImage(rgba.data, gray.width(), gray.height(), rgba.strides[0],
+                                    QImage.Format.Format_RGBA8888).copy())
+
+
 class KaraokeCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -53,6 +68,15 @@ class KaraokeCanvas(QWidget):
         self.empty_lyrics_text = t('尚未加入歌詞')
         self.motion_enabled = False
         self.motion_ms = 0.0
+        self.depth_mask = None
+        self.depth_motion_factor = 1.0
+        self.depth_strength = .3
+        self.depth_speed = .4
+        self._depth_mask_key = None
+        self._scaled_depth_mask = None
+        self.previous_background_frame = None
+        self.transition_ms = 0.0
+        self.transition_duration_ms = 2000
         # Appearance hooks used by the MV exporter; defaults match the live karaoke view.
         self.no_image_text = "no images"
         self.font_scale = 1.0
@@ -69,10 +93,7 @@ class KaraokeCanvas(QWidget):
         return [index for index in range(start, start + (2 if self.synced else 5))
                 if 0 <= index < len(self.lines)]
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self.rect()
+    def _paint_background(self, painter, rect):
         colors = (("#142744", "#551b5c"), ("#083a4a", "#195245"), ("#3f2446", "#745024"))
         top, bottom = colors[self.scene % len(colors)]
         gradient = QLinearGradient(0, 0, 0, rect.height())
@@ -91,7 +112,59 @@ class KaraokeCanvas(QWidget):
                     Qt.TransformationMode.SmoothTransformation)
                 self._background_key = key
             scaled = self._scaled_background
-            if self.drift is not None:
+            if self.motion_enabled and self.depth_mask is not None and not self.depth_mask.isNull():
+                from app.depth_motion import strip_offset
+                mask_key = (self.depth_mask.cacheKey(), scaled.width(), scaled.height())
+                if mask_key != self._depth_mask_key:
+                    self._scaled_depth_mask = self.depth_mask.scaled(
+                        scaled.size(), Qt.AspectRatioMode.IgnoreAspectRatio,
+                        Qt.TransformationMode.FastTransformation)
+                    self._depth_mask_key = mask_key
+                left = (rect.width() - scaled.width()) // 2
+                top = (rect.height() - scaled.height()) // 2
+                if self.drift is None:
+                    painter.drawPixmap(left, top, scaled)
+                moving = QPixmap(scaled.size())
+                moving.fill(Qt.GlobalColor.transparent)
+                layer = QPainter(moving)
+                layer.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                scale = scaled.height() / 1080
+                strip = max(1, round(12 * scale))
+                pad = max(2, math.ceil(32 * self.depth_strength * self.depth_motion_factor * scale) + 2)
+                for y in range(0, scaled.height(), strip):
+                    height = min(strip, scaled.height() - y)
+                    x0, v0 = strip_offset(self.motion_ms, y / scaled.height(),
+                                          strength=self.depth_strength * self.depth_motion_factor, speed=self.depth_speed)
+                    x1, v1 = strip_offset(self.motion_ms, (y + height) / scaled.height(),
+                                          strength=self.depth_strength * self.depth_motion_factor, speed=self.depth_speed)
+                    sy0 = max(0.0, min(float(scaled.height() - 1), y + v0 * scale))
+                    sy1 = max(sy0 + .01, min(float(scaled.height()), y + height + v1 * scale))
+                    layer.save()
+                    layer.setClipRect(QRectF(0, y, scaled.width(), height))
+                    layer.translate(x0 * scale, y)
+                    layer.shear((x1 - x0) * scale / height, 0)
+                    layer.drawPixmap(QRectF(0, 0, scaled.width(), height), scaled,
+                                     QRectF(0, sy0, scaled.width(), sy1 - sy0))
+                    layer.drawPixmap(QRectF(-pad, 0, pad, height), scaled, QRectF(0, sy0, 1, sy1 - sy0))
+                    layer.drawPixmap(QRectF(scaled.width(), 0, pad, height), scaled,
+                                     QRectF(scaled.width() - 1, sy0, 1, sy1 - sy0))
+                    layer.restore()
+                layer.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+                layer.drawPixmap(0, 0, self._scaled_depth_mask)
+                layer.end()
+                if self.drift is None:
+                    painter.drawPixmap(left, top, moving)
+                else:
+                    combined = QPixmap(scaled.size())
+                    combined.fill(Qt.GlobalColor.transparent)
+                    composite = QPainter(combined)
+                    composite.drawPixmap(0, 0, scaled)
+                    composite.drawPixmap(0, 0, moving)
+                    composite.end()
+                    target = drift_rect(rect.width(), rect.height(), scaled.width(), scaled.height(), *self.drift)
+                    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                    painter.drawPixmap(target, combined, QRectF(combined.rect()))
+            elif self.drift is not None:
                 target = drift_rect(rect.width(), rect.height(), scaled.width(), scaled.height(), *self.drift)
                 painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
                 painter.drawPixmap(target, scaled, QRectF(scaled.rect()))
@@ -110,6 +183,40 @@ class KaraokeCanvas(QWidget):
                 painter.setFont(QFont("Microsoft JhengHei", 22))
                 painter.drawText(rect.adjusted(0, 0, 0, -rect.height() // 2),
                                  Qt.AlignmentFlag.AlignCenter, self.no_image_text)
+        if self.previous_background_frame is not None:
+            painter.save()
+            painter.setOpacity(max(0.0, 1.0 - self.transition_ms / self.transition_duration_ms))
+            painter.drawPixmap(QRectF(rect), self.previous_background_frame,
+                               QRectF(self.previous_background_frame.rect()))
+            painter.restore()
+
+    def capture_background(self):
+        """Capture only the background, never the lyrics, for the next transition."""
+        if not self.background or self.background.isNull() or self.size().isEmpty():
+            return None
+        frame = QPixmap(self.size())
+        frame.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(frame)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._paint_background(painter, self.rect())
+        painter.end()
+        return frame
+
+    def start_background_transition(self, frame):
+        self.previous_background_frame = frame if frame and not frame.isNull() else None
+        self.transition_ms = 0.0
+
+    def advance_background_transition(self, elapsed_ms):
+        if self.previous_background_frame is not None:
+            self.transition_ms += max(0, elapsed_ms)
+            if self.transition_ms >= self.transition_duration_ms:
+                self.previous_background_frame = None
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect()
+        self._paint_background(painter, rect)
         if not self.lines:
             painter.setPen(QColor("#f0f5fa"))
             painter.setFont(QFont("Microsoft JhengHei", 24))
@@ -183,7 +290,6 @@ class KaraokeWindow(QWidget):
         self.timeline = None
         self.playback_speed = 1.0
         self.delay_ms = 0
-        self.save_delay = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -202,9 +308,162 @@ class KaraokeWindow(QWidget):
         self.motion_timer.setInterval(100)
         self.motion_timer.timeout.connect(self._animate_background)
         self.canvas.motion_enabled = bool(controller.settings.get('background_motion', True))
+        self.depth_enabled = bool(controller.settings.get('background_depth_motion', True))
+        from app.depth_settings import depth_settings, mask_options
+        options = depth_settings(controller.settings)
+        self.canvas.depth_strength = options['strength'] / 100
+        self.canvas.depth_speed = options['speed'] / 100
+        self._depth_configuration = mask_options(controller.settings)
+        self._depth_task = None
+        self._depth_task_key = None
+        self._depth_task_started = 0.0
+        self._depth_results = {}
+        self._depth_failed = set()
+
+    def set_depth_motion(self, enabled):
+        from app.depth_settings import depth_settings, mask_options
+        options = depth_settings(self.controller.settings)
+        self.canvas.depth_strength = options['strength'] / 100
+        self.canvas.depth_speed = options['speed'] / 100
+        config = mask_options(self.controller.settings)
+        if config != self._depth_configuration:
+            if self._depth_task:
+                self._depth_task.cancel()
+                self._depth_task = None
+                self._depth_task_key = None
+            self._depth_results.clear()
+            self._depth_failed.clear()
+            self.canvas.depth_mask = None
+            self._depth_configuration = config
+        self.depth_enabled = bool(enabled)
+        if not self.depth_enabled:
+            if self._depth_task:
+                self._depth_task.cancel()
+                self._depth_task = None
+                self._depth_task_key = None
+            self.canvas.depth_mask = None
+            self.motion_timer.setInterval(100)
+            self._set_background_status(t('背景：一般動態') if self.canvas.motion_enabled else t('背景：靜態'))
+        else:
+            self._start_depth_current()
+        self.canvas.update()
+
+    def _depth_current_key(self):
+        if not self.images or not 0 <= self.image_index < len(self.images):
+            return None
+        path = Path(self.images[self.image_index]).resolve()
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return str(path), stat.st_size, stat.st_mtime_ns
+
+    def _start_depth_current(self):
+        if not self.canvas.motion_enabled:
+            self._set_background_status(t('背景：靜態'))
+            return
+        if not self.depth_enabled:
+            self._set_background_status(t('背景：一般動態'))
+            return
+        if self._depth_task:
+            self._set_background_status(t('背景：一般動態 · 等待深度處理'),
+                                        t('正在處理圖片；若處理期間切換背景，完成後會繼續處理目前圖片。'))
+            return
+        key = self._depth_current_key()
+        if key is None:
+            self._set_background_status(t('背景：沒有圖片'))
+            return
+        if key in self._depth_failed:
+            self._set_background_status(t('背景：一般動態 · 深度處理失敗'))
+            return
+        if key in self._depth_results:
+            self._apply_depth_result(self._depth_results[key])
+            return
+        from runtime_config import ROOT
+        from app.karaoke_assets import DepthMotionTask
+        from app.model_store import ModelStore
+        from app.depth_cache import lookup
+        model = ROOT / 'models/depth/Depth-Anything-V2-Small-hf'
+        if not ModelStore(self.controller.settings).ready('depth'):
+            self._set_background_status(t('背景：一般動態 · 深度模型未準備'),
+                                        t('請至模型與元件管理準備背景深度動畫模型。'))
+            return
+        cached = lookup(ROOT / '.app_data/cache/depth-motion', key[0], model, self.controller.settings)
+        if cached:
+            self._depth_results[key] = cached
+            self._apply_depth_result(cached)
+            return
+        python = self.controller.runtime('acestep_python')
+        if not python:
+            self._set_background_status(t('背景：一般動態 · 缺少執行元件'),
+                                        t('請至設定中的管理安裝準備風格轉換執行元件。'))
+            return
+        task = DepthMotionTask(key[0], python, model, self, settings=self.controller.settings)
+        self._depth_task = task
+        self._depth_task_key = key
+        self._depth_task_started = time.monotonic()
+        self._set_background_status(t('背景：一般動態 · 深度處理中'),
+                                    t('首次處理可能超過背景切換時間；完成結果會快取。'))
+        task.ready.connect(lambda _image, result, key=key: self._depth_ready(key, result))
+        task.failed.connect(lambda message, key=key: self._depth_error(key, message))
+        task.start()
+
+    def _apply_depth_result(self, result):
+        mask = depth_mask_pixmap(result['mask'])
+        if mask is None:
+            self._set_background_status(t('背景：一般動態 · 深度遮罩無效'))
+            return
+        self.canvas.depth_mask = mask
+        self.canvas.depth_motion_factor = float(result.get('motion_factor', 1.0))
+        names = {'near': 'A3-1', 'ground': 'A3-3', 'detrend': 'A3-4',
+                 'inverse': 'A3-2', 'local': 'A3-7'}
+        name = names.get(result.get('method'), 'A3')
+        coverage = float(result.get('coverage', 0)) * 100
+        self._set_background_status(t('背景：深度 {mode} · {coverage:.0f}%', mode=name, coverage=coverage),
+                                    t('目前顯示深度局部動畫；覆蓋率為遮罩比例。') if result.get('in_range', True)
+                                    else t('遮罩覆蓋率未達預設範圍，效果可能不明顯或範圍過大。'))
+        self.motion_timer.setInterval(33)
+        self.canvas.update()
+
+    def _depth_ready(self, key, result):
+        self._depth_task = None
+        self._depth_task_key = None
+        self._depth_results[key] = result
+        refresh = getattr(self.controller, 'refresh_depth_indicator', None)
+        if callable(refresh):
+            refresh()
+        if self.depth_enabled and key == self._depth_current_key():
+            self._apply_depth_result(result)
+            if self.canvas.depth_mask is not None:
+                if self.background_timer.isActive() and self.background_timer.remainingTime() < 5000:
+                    self.background_timer.start(5000)
+                self.background_remaining = max(self.background_remaining, 5000)
+        else:
+            self._start_depth_current()
+
+    def _depth_error(self, key, message):
+        import logging
+        logging.getLogger(__name__).warning('Depth animation unavailable: %s', message)
+        self._depth_task = None
+        self._depth_task_key = None
+        self._depth_failed.add(key)
+        if key == self._depth_current_key():
+            self._set_background_status(t('背景：一般動態 · 深度處理失敗'), message)
+        else:
+            self._start_depth_current()
 
     def set_background_motion(self, enabled):
         self.canvas.motion_enabled = bool(enabled)
+        if not enabled and self._depth_task:
+            self._depth_task.cancel()
+            self._depth_task = None
+            self._depth_task_key = None
+        if enabled and self.depth_enabled:
+            self._start_depth_current()
+        elif not enabled:
+            self._set_background_status(t('背景：靜態'))
+        else:
+            self._set_background_status(t('背景：一般動態'))
         self._sync_background_motion()
         self.canvas.update()
 
@@ -219,20 +478,33 @@ class KaraokeWindow(QWidget):
         elif not visible_playback and self.background_timer.isActive():
             self.background_remaining = max(1, self.background_timer.remainingTime())
             self.background_timer.stop()
-        active = self.canvas.motion_enabled and visible_playback
+        transitioning = self.canvas.previous_background_frame is not None
+        interval = 33 if transitioning or (self.canvas.motion_enabled and self.canvas.depth_mask is not None) else 100
+        if self.motion_timer.interval() != interval:
+            self.motion_timer.setInterval(interval)
+        active = (self.canvas.motion_enabled or transitioning) and visible_playback
         if active and not self.motion_timer.isActive():
             self.motion_clock.start()
             self.motion_timer.start()
         elif not active and self.motion_timer.isActive():
-            self.canvas.motion_ms += self.motion_clock.elapsed()
+            elapsed = self.motion_clock.elapsed()
+            if self.canvas.motion_enabled:
+                self.canvas.motion_ms += elapsed
+            self.canvas.advance_background_transition(elapsed)
             self.motion_timer.stop()
             self.motion_clock.invalidate()
 
     def _animate_background(self):
         self._sync_background_motion()
         if self.motion_timer.isActive():
-            self.canvas.motion_ms += self.motion_clock.restart()
+            elapsed = self.motion_clock.restart()
+            if self.canvas.motion_enabled:
+                self.canvas.motion_ms += elapsed
+            was_transitioning = self.canvas.previous_background_frame is not None
+            self.canvas.advance_background_transition(elapsed)
             self.canvas.update()
+            if was_transitioning and self.canvas.previous_background_frame is None:
+                self._sync_background_motion()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -273,6 +545,10 @@ class KaraokeWindow(QWidget):
         menu.addAction(action)
         return widget, layout
 
+    def _set_background_status(self, text, detail=None):
+        self.background_status.setText(text)
+        self.background_status.setToolTip(detail or text)
+
     def _build_controls(self, layout):
         self.setStyleSheet(self.styleSheet() +
                           "QPushButton { padding: 4px; } QPushButton:checked { background: #24699a; border: 2px solid #9cd9ff; } "
@@ -284,6 +560,9 @@ class KaraokeWindow(QWidget):
         self.title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.title.setStyleSheet("font-size: 17px; font-weight: bold;")
         header.addWidget(self.title, 1)
+        self.background_status = QLabel(t('背景：一般動態'))
+        self.background_status.setStyleSheet('font-size: 12px; color: #b8d0e4;')
+        header.addWidget(self.background_status)
         self.lyrics_status = QLabel(t('無歌詞'))
         self.lyrics_status.setToolTip(t('目前播放歌曲的歌詞格式'))
         header.addWidget(self.lyrics_status)
@@ -397,21 +676,6 @@ class KaraokeWindow(QWidget):
         self.guide_menu = self.more_menu.addMenu(t('導唱音量'))
         self.guide_menu_widget, self.guide_menu_layout = self._menu_panel(self.guide_menu)
         self.guide_menu.menuAction().setVisible(False)
-        lyrics_menu = self.more_menu.addMenu(t('字幕調整'))
-        self.lyric_buttons = []
-        _, lyric_layout = self._menu_panel(lyrics_menu)
-        for title, action in ((t('歌詞 ↓'), lambda: self.shift_lines(1)), (t('歌詞 ↑'), lambda: self.shift_lines(-1)),
-                              (t('速度 −'), lambda: self.change_speed(-.1)), (t('速度 +'), lambda: self.change_speed(.1))):
-            button = QPushButton(title)
-            button.clicked.connect(action)
-            self.lyric_buttons.append(button)
-            lyric_layout.addWidget(button)
-        self.speed_label = QLabel(t('歌詞 1.0×'))
-        lyric_layout.addWidget(self.speed_label)
-        self.reset_delay_button = QPushButton(t('重設字幕偏移'))
-        self.reset_delay_button.clicked.connect(lambda: self.adjust_delay(-self.delay_ms))
-        self.reset_delay_button.hide()
-        lyric_layout.addWidget(self.reset_delay_button)
         self.mic_panel = QWidget(self)
         self.mic_panel.setFixedHeight(36)
         mic_layout = QHBoxLayout(self.mic_panel)
@@ -537,7 +801,10 @@ class KaraokeWindow(QWidget):
             self.bottom_effects.show()
 
     def set_song(self, title: str, lyrics: str, images: list[Path], duration_ms: int,
-                 timeline=None, playback_speed=1.0, delay_ms=0, save_delay=None):
+                 timeline=None, playback_speed=1.0, delay_ms=0):
+        previous_path = (self.images[self.image_index] if self.images and
+                         0 <= self.image_index < len(self.images) else None)
+        previous_frame = self.canvas.capture_background() if self.isVisible() and previous_path else None
         self.title.setText(title)
         self.full_title = title
         self.title.setToolTip(title)
@@ -545,7 +812,6 @@ class KaraokeWindow(QWidget):
         self.timeline = timeline
         self.playback_speed = playback_speed
         self.delay_ms = delay_ms
-        self.save_delay = save_delay
         self.canvas.synced = timeline is not None
         self.canvas.lines = timeline.lines if timeline else (lyrics.splitlines() if lyrics.strip() else [])
         self.lyrics_status.setText(t('LRC 同步歌詞') if timeline is not None else
@@ -561,15 +827,8 @@ class KaraokeWindow(QWidget):
         self.speed = 1.0
         self.anchor_base = 0.0
         self.anchor_scroll = 0.0
-        self.speed_label.setText(t('歌詞 1.0×'))
-        for index, button in enumerate(self.lyric_buttons):
-            button.setVisible(not timeline or index < 2)
-            button.setText((t('字幕延後 0.2 秒'), t('字幕提早 0.2 秒'))[index] if timeline and index < 2 else
-                           (t('歌詞 ↓'), t('歌詞 ↑'), t('速度 −'), t('速度 +'))[index])
-        self.reset_delay_button.setVisible(timeline is not None)
-        if timeline:
-            self.speed_label.setText(t('字幕偏移 {p0:+.1f} 秒', p0=delay_ms / 1000))
-        self._show_background()
+        current_path = self.images[self.image_index] if self.images else None
+        self._show_background(previous_frame if current_path and current_path != previous_path else None)
         self.update_progress()
         self.canvas.update()
 
@@ -608,43 +867,18 @@ class KaraokeWindow(QWidget):
             self.canvas.progress = progress
             self.canvas.update()
 
-    def shift_lines(self, amount):
-        if self.timeline:
-            self.adjust_delay(amount * 200)
-            return
-        self.offset_lines += amount
-        self.update_progress()
-
-    def adjust_delay(self, amount):
-        if not self.timeline:
-            return
-        previous = self.delay_ms
-        self.delay_ms += amount
-        if self.save_delay:
-            try:
-                self.save_delay(self.delay_ms)
-            except (OSError, ValueError) as error:
-                self.delay_ms = previous
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, t('儲存字幕偏移失敗'), str(error))
-        self.speed_label.setText(t('字幕偏移 {p0:+.1f} 秒', p0=self.delay_ms / 1000))
-        self.update_progress()
-
-    def change_speed(self, amount):
-        base = self._base_progress()
-        self.anchor_scroll += (base - self.anchor_base) * self.speed
-        self.anchor_base = base
-        self.speed = round(max(0.5, min(2.0, self.speed + amount)), 1)
-        self.speed_label.setText(t('歌詞 {p0:.1f}×', p0=self.speed))
-        self.update_progress()
-
-    def _show_background(self):
+    def _show_background(self, transition_from=None):
         if hasattr(self, 'motion_timer'):
             self.motion_timer.stop()
             self.motion_clock.invalidate()
         self.canvas.motion_ms = 0.0
         self.canvas.background = QPixmap(str(self.images[self.image_index])) if self.images else None
+        self.canvas.start_background_transition(
+            transition_from if self.canvas.background and not self.canvas.background.isNull() else None)
+        self.canvas.depth_mask = None
+        self.motion_timer.setInterval(100)
         self.canvas.scene = self.image_index
+        self._start_depth_current()
         self._sync_background_motion()
         self.canvas.update()
 
@@ -662,10 +896,22 @@ class KaraokeWindow(QWidget):
     def next_background(self):
         if not self.images:
             return
+        if (self.depth_enabled and self._depth_task and
+                self._depth_task_key == self._depth_current_key() and
+                time.monotonic() - self._depth_task_started < 25):
+            self.background_remaining = 1000
+            self.background_timer.start(1000)
+            return
         self.background_remaining = 12000
         self.background_timer.setInterval(12000)
+        if len(self.images) == 1:
+            if self.canvas.depth_mask is None:
+                self.canvas.motion_ms = 0.0
+                self.canvas.update()
+            return
+        previous_frame = self.canvas.capture_background()
         self._advance_background()
-        self._show_background()
+        self._show_background(previous_frame)
 
     def toggle_fullscreen(self):
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
@@ -763,6 +1009,10 @@ class KaraokeWindow(QWidget):
         self.controller._set_guide_volume(value)
 
     def closeEvent(self, event):
+        if self._depth_task:
+            self._depth_task.cancel()
+            self._depth_task = None
+            self._depth_task_key = None
         self.effects_timer.stop()
         self.set_guide_available(False)
         self.controller.stop_playback()

@@ -27,6 +27,7 @@ Can't find the song you want in the karaoke catalog? Want to hear a familiar son
 - **Lyric timing**: tap Space along with the music to turn plain text into a line-by-line LRC, or re-time an existing one. [Details](docs/LYRIC_TIMING.md)
 - **Create an MV**: combine a song version or your own recording with subtitles and background images, and export an MP4. [Details](docs/MV_EXPORT.md)
 - **Backgrounds**: keywords are generated automatically to search for background images while you sing; simple drag and drop assigns a background to each song. [Details](docs/BACKGROUNDS.md)
+- **Depth background animation (experimental)**: animate regions of still images during karaoke and MV export, with optional preprocessing and adjustable motion. [Details](docs/DEPTH_ANIMATION.md)
 - **Live adjustment**: change speed (0.7–1.3×) and key (±6 semitones) while singing, and remember your best setting for each song. [Details](docs/SUPPLEMENTARY.md#playback-speed-and-key)
 - **Playlists and recording**: build your own singing playlist and record your performance with a microphone. [Details](docs/SINGING_RECORDING.md)
 - **Profiles**: add or switch profiles at the top right (and move them to another computer as a ZIP), so each person (or purpose) keeps their own volume preferences, playlist, best settings and recordings. [Details](docs/PROFILES.md)

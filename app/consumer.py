@@ -10,23 +10,23 @@ import uuid
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QBuffer, QByteArray, QEventLoop, QIODevice, QObject, QPoint, QProcess, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QBuffer, QByteArray, QEventLoop, QIODevice, QObject, QPoint, QProcess, QRect, QRunnable, QThreadPool, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtMultimedia import QtAudio, QAudioFormat, QAudioOutput, QAudioSink, QMediaDevices, QMediaPlayer
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QFileDialog,
                                QFormLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QProgressDialog, QPushButton, QSlider, QSpinBox,
-                               QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+                               QScrollArea, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
                                QAbstractItemView, QSizePolicy)
 from PySide6.QtWidgets import QHeaderView, QTreeWidgetItemIterator
 
 from runtime_config import DEFAULTS, migration_issues, runtime as resolve_runtime, worker_env as resolve_worker_env
 
 from app.jobs import JobManager
-from app.karaoke_assets import (ActivityTask, image_files,
+from app.karaoke_assets import (ActivityTask, DepthMotionTask, image_files,
                                 shared_images_dir, song_images_dir)
-from app.lyrics import effective_speed, load_selected, lyric_status, save_delay
+from app.lyrics import effective_speed, load_selected, lyric_status
 from app.karaoke_window import KaraokeWindow
 from app.library_media import cache_background_cover, cache_thumbnail, read_media
 from app.playlist import load_playlist, resolve_item, save_playlist
@@ -48,6 +48,42 @@ from app.song_images import selected_thumbnail
 from app.image_search import ImageSearchRegistry
 
 from runtime_config import ROOT
+
+DEPTH_STATUS_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+class DepthParameterSpinBox(QSpinBox):
+    """Let the settings page scroll without changing animation values."""
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class DepthStatusDelegate(QStyledItemDelegate):
+    """Draw the small cache indicator after the status text, not before it."""
+    def paint(self, painter, option, index):
+        state = index.data(DEPTH_STATUS_ROLE)
+        if state not in ('complete', 'partial'):
+            return super().paint(painter, option, index)
+        item = QStyleOptionViewItem(option)
+        self.initStyleOption(item, index)
+        metrics = QFontMetrics(item.font)
+        size, gap = 15, 4
+        item.text = metrics.elidedText(item.text, Qt.TextElideMode.ElideRight,
+                                       max(0, item.rect.width() - size - gap - 12))
+        widget = item.widget
+        style = widget.style() if widget else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, item, painter, widget)
+        text_rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, item, widget)
+        x = min(text_rect.left() + metrics.horizontalAdvance(item.text) + gap,
+                item.rect.right() - size - 2)
+        y = item.rect.center().y() - size // 2
+        painter.save()
+        painter.setClipRect(item.rect)
+        icon('depth_ready', '#168044' if state == 'complete' else '#b87500').paint(
+            painter, QRect(x, y, size, size))
+        painter.restore()
+
+
 LEVELS = {
     "小": (0.3, 0.25, "0.3,0.35,0.4", "0.2,0.25,0.3"),
     "適中": (0.2, 0.2, "0.17,0.2,0.25", "0.15,0.2,0.25"),
@@ -151,6 +187,13 @@ class ConsumerWindow(QMainWindow):
         self.install_process = None
         self.karaoke_window = None
         self.activity_tasks = {}
+        self.depth_batch_task = None
+        self.depth_batch_images = []
+        self.depth_batch_errors = []
+        self.depth_batch_total = 0
+        self.depth_batch_settings = {}
+        self._background_cover_cache = {}
+        self._depth_cover_candidates = None
         self.activity_cache = {}
         self.current_activity_key = None
         self.expanded_song_ids = set()
@@ -404,6 +447,7 @@ class ConsumerWindow(QMainWindow):
         self.info = QLabel(t('讀取音樂資料夾中…'))
         layout.addWidget(self.info)
         self.tree = QTreeWidget()
+        self.tree.setItemDelegateForColumn(1, DepthStatusDelegate(self.tree))
         self.tree.setHeaderLabels([t('歌曲與版本'), t('狀態'), t('歌詞'), t('試聽'), t('加入唱歌頁'), t('製作版本'), t('素材')])
         self.tree.setColumnWidth(0, 525)
         self.tree.setColumnWidth(1, 140)
@@ -438,6 +482,9 @@ class ConsumerWindow(QMainWindow):
         actions.addWidget(self.reload_library)
         actions.addWidget(self._button(t('批次分離人聲'), self.batch_separate))
         actions.addWidget(self._button(t('批次抓取歌詞'), self.batch_lyrics))
+        self.depth_prepare_button = self._button(t('預處理背景動畫'), self.batch_depth_motion)
+        self.depth_prepare_button.setToolTip(t('依唱歌背景影像設定，預先處理勾選歌曲使用的圖片。'))
+        actions.addWidget(self.depth_prepare_button)
         actions.addWidget(self._button(t('批次風格轉換'), lambda: self.open_version_dialog(self._selected_for_batch())))
         actions.addWidget(self._button(t('重新嘗試失敗項'), self.retry_failed))
         layout.addLayout(actions)
@@ -569,7 +616,13 @@ class ConsumerWindow(QMainWindow):
         self.preview_timer.timeout.connect(self._update_preview_progress)
 
     def _build_settings_page(self):
-        layout = QVBoxLayout(self.settings_page)
+        outer = QVBoxLayout(self.settings_page)
+        scroll = QScrollArea(self.settings_page)
+        scroll.setWidgetResizable(True)
+        body = QWidget()
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
+        layout = QVBoxLayout(body)
         title = QLabel(t('設定'))
         title.setStyleSheet("font-size: 24px; font-weight: bold; padding: 8px 0;")
         layout.addWidget(title)
@@ -593,10 +646,45 @@ class ConsumerWindow(QMainWindow):
         self.background_mode.setCurrentIndex(max(0, self.background_mode.findData(self.settings.get("background_mode", "combined"))))
         self.background_mode.setToolTip(t('歌曲影像包含音樂檔封面與素材 images 資料夾圖片；沒有可用影像時顯示 no images。預設包含共用影像。'))
         form.addRow(t('唱歌背景影像'), self.background_mode)
+        self.background_animation_toggle = QPushButton(t('展開背景動畫設定'))
+        self.background_animation_toggle.setCheckable(True)
+        form.addRow(self.background_animation_toggle)
+        self.background_animation_panel = QWidget()
+        animation_form = QFormLayout(self.background_animation_panel)
+        animation_form.setContentsMargins(8, 0, 0, 0)
+        self.background_animation_panel.hide()
+        self.background_animation_toggle.toggled.connect(self.background_animation_panel.setVisible)
+        self.background_animation_toggle.toggled.connect(
+            lambda expanded: self.background_animation_toggle.setText(
+                t('收合背景動畫設定') if expanded else t('展開背景動畫設定')))
+        form.addRow(self.background_animation_panel)
         self.background_motion = QCheckBox(t('背景微動態'))
         self.background_motion.setChecked(bool(self.settings.get('background_motion', True)))
         self.background_motion.setToolTip(t('輕微縮放與移動，保留完整圖片；若音訊不穩可關閉比較。'))
-        form.addRow(self.background_motion)
+        animation_form.addRow(self.background_motion)
+        self.background_depth_motion = QCheckBox(t('深度背景動畫（實驗）'))
+        self.background_depth_motion.setChecked(bool(self.settings.get('background_depth_motion', True)))
+        self.background_depth_motion.setToolTip(t('使用本機深度模型產生局部動畫；模型不可用時使用原本的背景動作。'))
+        animation_form.addRow(self.background_depth_motion)
+        from app.depth_settings import depth_settings
+        options = depth_settings(self.settings)
+        self.depth_fields = {}
+        for key, label, upper, suffix in (
+            ('strength', t('動作強度'), 100, '%'), ('speed', t('動作速度'), 100, '%'),
+            ('minimum', t('遮罩最低覆蓋'), 100, '%'), ('maximum', t('遮罩最高覆蓋'), 100, '%'),
+            ('person_expand', t('人物遮罩擴張'), 80, ' px'), ('landscape_expand', t('風景遮罩擴張'), 80, ' px')):
+            field = DepthParameterSpinBox()
+            field.setRange(0, upper)
+            field.setSuffix(suffix)
+            field.setValue(options[key])
+            self.depth_fields[key] = field
+            animation_form.addRow(label, field)
+        self.depth_solid = QCheckBox(t('遮罩實心化'))
+        self.depth_solid.setChecked(options['solid'])
+        animation_form.addRow(self.depth_solid)
+        cache_hint = QLabel(t('調整強度或速度會沿用遮罩；調整覆蓋率、擴張或實心化後需重新預處理。'))
+        cache_hint.setWordWrap(True)
+        animation_form.addRow(cache_hint)
         self.image_receiver_percent = QSpinBox()
         self.image_receiver_percent.setRange(10, 30)
         self.image_receiver_percent.setSuffix('%')
@@ -943,6 +1031,9 @@ class ConsumerWindow(QMainWindow):
         if self.playing_item:
             QMessageBox.warning(self, t('設定'), t('請先停止唱歌，再儲存音訊設定。'))
             return
+        if self.depth_fields['minimum'].value() > self.depth_fields['maximum'].value():
+            QMessageBox.warning(self, t('設定'), t('遮罩最低覆蓋不可大於最高覆蓋。'))
+            return
         source_text, output_text = self.source_field.text().strip(), self.output_field.text().strip()
         if not source_text or not Path(source_text).is_dir() or not output_text:
             QMessageBox.warning(self, t('設定'), t('請選擇有效的音樂資料夾與處理結果資料夾'))
@@ -963,6 +1054,9 @@ class ConsumerWindow(QMainWindow):
         self.settings["singing_audio_mode"] = self.singing_audio_mode.currentData()
         self.settings["background_mode"] = self.background_mode.currentData()
         self.settings['background_motion'] = self.background_motion.isChecked()
+        self.settings['background_depth_motion'] = self.background_depth_motion.isChecked()
+        self.settings.update({'depth_' + key: field.value() for key, field in self.depth_fields.items()})
+        self.settings['depth_solid'] = self.depth_solid.isChecked()
         self.settings['image_receiver_percent'] = self.image_receiver_percent.value()
         self.settings['ui_language'] = self.ui_language.currentData()
         self._apply_output_device()
@@ -973,6 +1067,8 @@ class ConsumerWindow(QMainWindow):
             self.info.setText(t('設定已儲存；介面語言將在重新啟動後生效。'))
         if self.karaoke_window is not None:
             self.karaoke_window.set_background_motion(self.settings['background_motion'])
+            self.karaoke_window.set_depth_motion(self.settings['background_depth_motion'])
+        self.refresh_tree()
         if changed:
             self.scan_library()
         message = (t('設定已儲存；介面語言將在重新啟動後生效。')
@@ -1021,6 +1117,21 @@ class ConsumerWindow(QMainWindow):
         self.refresh_queue_labels()
 
     def refresh_tree(self):
+        from app.model_store import ModelStore
+        from app.depth_cache import has_index
+        depth_cache = ROOT / '.app_data/cache/depth-motion'
+        check_depth = (depth_cache / 'index').is_dir() and ModelStore(self.settings).ready('depth')
+        self._depth_cover_candidates = {}
+        covers = data_dir() / 'covers'
+        if check_depth and covers.is_dir():
+            try:
+                for path in covers.iterdir():
+                    parts = path.name.rsplit('_', 2)
+                    if (len(parts) == 3 and parts[2] == 'background.png' and
+                            has_index(depth_cache, path, self.settings)):
+                        self._depth_cover_candidates.setdefault(parts[0], []).append(path)
+            except OSError:
+                pass
         view = self._capture_tree_view()
         checked = {self.tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole)
                    for i in range(self.tree.topLevelItemCount())
@@ -1040,6 +1151,8 @@ class ConsumerWindow(QMainWindow):
             display_name = song["title"] + (f"  —  {song['artist']}" if song.get("artist") else "")
             lyrics_label, lyrics_hint = lyric_status(self.workspace, song_id)
             root = QTreeWidgetItem(self.tree, [display_name, summary, lyrics_label, "", "", ""])
+            if check_depth:
+                self._set_depth_indicator(root, song_id)
             root.setToolTip(2, lyrics_hint)
             root.setIcon(0, cover_icon(self.song_thumbnail(song)))
             root.setToolTip(0, " · ".join(x for x in (song.get("artist"), song.get("album"), song["path"]) if x))
@@ -1085,6 +1198,46 @@ class ConsumerWindow(QMainWindow):
         self.tree.blockSignals(False)
         self._restore_tree_view(view)
         self._update_selection()
+
+    def _set_depth_indicator(self, item, song_id):
+        from app.depth_cache import has_index, lookup
+        cache = ROOT / '.app_data/cache/depth-motion'
+        model = ROOT / 'models/depth/Depth-Anything-V2-Small-hf'
+        item.setData(1, DEPTH_STATUS_ROLE, None)
+        item.setToolTip(1, '')
+        try:
+            mode = self.settings.get('background_mode', 'combined')
+            candidates = ([] if mode == 'shared_only' else list(image_files(song_images_dir(self.workspace, song_id))))
+            if mode != 'song_first':
+                candidates += image_files(self.workspace / 'shared_images')
+            covers = data_dir() / 'covers'
+            if mode != 'shared_only':
+                if self._depth_cover_candidates is not None:
+                    candidates += self._depth_cover_candidates.get(song_id, [])
+                elif covers.is_dir():
+                    candidates += [p for p in covers.iterdir() if p.name.startswith(f'{song_id}_')
+                                   and p.name.endswith('_background.png')]
+            if not any(has_index(cache, image, self.settings) for image in candidates):
+                return
+            images = self._background_images(song_id, initialize_shared=False)
+            prepared = sum(lookup(cache, image, model, self.settings) is not None for image in images)
+            if prepared:
+                item.setData(1, DEPTH_STATUS_ROLE, 'complete' if prepared == len(images) else 'partial')
+                item.setToolTip(1, t('深度背景已處理 {p0}／{p1} 張圖片', p0=prepared, p1=len(images)))
+        except (OSError, ValueError):
+            pass
+
+    def refresh_depth_indicator(self):
+        if not self.playing_item:
+            return
+        entry = self.playing_item.data(Qt.ItemDataRole.UserRole)
+        song_id = entry.get('song_id') if isinstance(entry, dict) else None
+        self._depth_cover_candidates = None
+        for index in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(index)
+            if item.data(0, Qt.ItemDataRole.UserRole) == song_id:
+                self._set_depth_indicator(item, song_id)
+                break
 
     def _compact_button(self, text, callback, width):
         row = QWidget()
@@ -1198,7 +1351,7 @@ class ConsumerWindow(QMainWindow):
             lambda _: self._refresh_mv_page() if self.centralWidget().currentWidget() is self.mv_page else None)
 
     def _refresh_mv_page(self):
-        if self.mv.job:
+        if self.mv.job or self.mv.preparing_depth:
             return
         item = self.tree.currentItem()
         while item is not None and item.parent() is not None:
@@ -1231,6 +1384,8 @@ class ConsumerWindow(QMainWindow):
             song_id = key
             assets = menu.addAction(t('編輯歌詞與背景素材'))
             assets.triggered.connect(lambda: self.edit_song_assets(song_id))
+            prepare = menu.addAction(t('預處理背景動畫'))
+            prepare.triggered.connect(lambda: self.prepare_depth_motion([song_id]))
             add = menu.addAction(t('加入原曲到歌單'))
             add.triggered.connect(lambda: self.add_to_queue(song_id, "original"))
             preview = menu.addAction(t('試聽原曲'))
@@ -1251,6 +1406,7 @@ class ConsumerWindow(QMainWindow):
             return
         else:
             song_id, variant_id = key
+            menu.addAction(t('預處理背景動畫'), lambda: self.prepare_depth_motion([song_id]))
             preview = menu.addAction(t('試聽這個版本'))
             preview.triggered.connect(self.toggle_preview)
             add = menu.addAction(t('加入唱歌頁'))
@@ -1548,6 +1704,28 @@ class ConsumerWindow(QMainWindow):
         if self.karaoke_window and self.karaoke_window.isVisible():
             self.karaoke_window.set_song(t('歌單已播完'), "", [], 0)
 
+    def _background_images(self, song_id, initialize_shared=True):
+        song = self.song_map.get(song_id, {})
+        mode = self.settings.get('background_mode', 'combined')
+        local = image_files(song_images_dir(self.workspace, song_id))
+        shared = image_files(shared_images_dir(self.workspace) if initialize_shared else self.workspace / 'shared_images')
+        images = shared if mode == 'shared_only' else local + shared if mode == 'combined' else local
+        if mode != 'shared_only':
+            source = Path(song.get('path', ''))
+            if source.is_file():
+                stat = source.stat()
+                cache_key = (str(source.resolve()), stat.st_size, stat.st_mtime_ns)
+                cached = self._background_cover_cache.get(song_id)
+                if (cached is None or cached[0] != cache_key or
+                        (cached[1] is None and initialize_shared) or
+                        (cached[1] is not None and not Path(cached[1]).is_file())):
+                    cached = (cache_key, cache_background_cover(song_id, source))
+                    self._background_cover_cache[song_id] = cached
+                cover = cached[1]
+                if cover:
+                    images.append(cover)
+        return list(dict.fromkeys(images))
+
     def _sync_karaoke_song(self, item):
         song_id, variant_id = item["song_id"], item["variant_id"]
         song = self.song_map.get(song_id, {})
@@ -1564,20 +1742,10 @@ class ConsumerWindow(QMainWindow):
         if reason:
             self.info.setText(reason)
             QMessageBox.warning(self.karaoke_window, t('歌詞無法同步'), reason)
-        mode = self.settings.get("background_mode", "combined")
-        local = image_files(song_images_dir(self.workspace, song_id))
-        shared = image_files(shared_images_dir(self.workspace))
-        images = (shared if mode == "shared_only" else local + shared if mode == "combined" else local)
-        if mode != "shared_only":
-            source = Path(song.get("path", ""))
-            if source.is_file():
-                cover = cache_background_cover(song_id, source)
-                if cover:
-                    images.append(cover)
+        images = self._background_images(song_id)
         self.karaoke_window.set_song(self.queue_display_label(item), lyrics, images, self.player.duration(),
             timeline=timeline, playback_speed=playback_speed,
-            delay_ms=state.get('offsets', {}).get(variant_id, 0),
-            save_delay=lambda value: save_delay(self.workspace, song_id, variant_id, value))
+            delay_ms=state.get('offsets', {}).get(variant_id, 0))
         key = (song_id, variant_id)
         self.current_activity_key = key
         for pending, task in list(self.activity_tasks.items()):
@@ -1644,6 +1812,9 @@ class ConsumerWindow(QMainWindow):
         self.flush_audio_preferences()
         self._save_last_queue()
         self.lyric_lookup.cancel()
+        if self.depth_batch_task:
+            self.depth_batch_task.cancel()
+            self.depth_batch_task = None
         self.pending_ops.clear()
         self.jobs.cancel()
         for task in list(self.activity_tasks.values()):
@@ -2151,6 +2322,64 @@ class ConsumerWindow(QMainWindow):
     def batch_lyrics(self):
         self._submit(self._selected_for_batch(), "lyrics")
 
+    def batch_depth_motion(self):
+        self.prepare_depth_motion(self._selected_for_batch())
+
+    def prepare_depth_motion(self, ids):
+        if self.playing_item is not None:
+            QMessageBox.information(self, t('預處理背景動畫'), t('請先停止播放，再預處理背景圖片。'))
+            return
+        self._submit(ids, 'depth')
+
+    def _start_depth_preprocess(self, song_id):
+        try:
+            self.depth_batch_images = self._background_images(song_id)
+        except (OSError, ValueError) as error:
+            self._finish_operation(False, str(error), show_error=False)
+            return
+        self.depth_batch_errors = []
+        self.depth_batch_total = len(self.depth_batch_images)
+        self.depth_batch_settings = dict(self.settings)
+        if not self.depth_batch_images:
+            self._finish_operation(True, t('沒有背景圖片，已跳過'), outcome='skipped')
+            return
+        self.job_state[song_id] = t('◷ 正在預處理背景動畫')
+        self.refresh_tree()
+        self._next_depth_preprocess()
+
+    def _next_depth_preprocess(self):
+        if self._closing or not self.active_op or self.active_op['mode'] != 'depth' or self.depth_batch_task:
+            return
+        if not self.depth_batch_images:
+            errors = len(self.depth_batch_errors)
+            done = self.depth_batch_total - errors
+            detail = t('背景圖片完成 {p0}／{p1}，失敗 {p2}', p0=done, p1=self.depth_batch_total, p2=errors)
+            if errors:
+                detail += '\n' + '\n'.join(self.depth_batch_errors)
+            self._finish_operation(not errors, detail, show_error=False)
+            return
+        image = self.depth_batch_images.pop(0)
+        index = self.depth_batch_total - len(self.depth_batch_images)
+        self.work_stage = t('預處理背景圖片 {p0}／{p1}', p0=index, p1=self.depth_batch_total)
+        self.work_candidate = image.name
+        self._update_work_summary()
+        task = DepthMotionTask(image, self.runtime('acestep_python'),
+                               ROOT / 'models/depth/Depth-Anything-V2-Small-hf', self, settings=self.depth_batch_settings)
+        self.depth_batch_task = task
+        task.ready.connect(lambda _path, _result: self._depth_preprocess_finished())
+        task.failed.connect(lambda error, image=image: self._depth_preprocess_finished(image, error))
+        task.start()
+
+    def _depth_preprocess_finished(self, image=None, error=None):
+        if self._closing or not self.active_op or self.active_op['mode'] != 'depth':
+            return
+        self.depth_batch_task = None
+        if error is not None:
+            self.depth_batch_errors.append(f'{image.name}: {error}')
+        elif self.karaoke_window is not None:
+            self.karaoke_window._depth_failed.clear()
+        QTimer.singleShot(0, self._next_depth_preprocess)
+
     def _lyrics_status(self, detail):
         if self.active_op and self.active_op["mode"] == "lyrics":
             self.work_stage = detail
@@ -2200,16 +2429,20 @@ class ConsumerWindow(QMainWindow):
         if self.models_dialog is not None and self.models_dialog.worker is not None:
             QMessageBox.information(self, t('模型與元件管理'), t('模型準備中，請等待完成。'))
             return
-        groups = ['separation'] if mode == 'separate' else ['styling'] if mode == 'style' else []
+        groups = ['separation'] if mode == 'separate' else ['styling'] if mode == 'style' else ['depth'] if mode == 'depth' else []
         if mode == 'style' and any(not load_catalog(self.workspace, sid).get('separation') for sid in ids):
             groups.append('separation')
         if any(not ModelStore(self.settings).ready(group) for group in groups):
             self.open_models()
+            if mode == 'depth' and self.models_dialog is not None:
+                self.models_dialog.separation.setChecked(False)
+                self.models_dialog.styling.setChecked(False)
+                self.models_dialog.depth.setChecked(True)
             return
         if mode in {"separate", "style"} and not self.runtime("roformer_python"):
             QMessageBox.warning(self, t('無法處理'), t('執行元件缺失，請從「設定 → 管理安裝」準備所需元件'))
             return
-        if mode in {"style", "fx"} and not self.runtime("acestep_python"):
+        if mode in {"style", "fx", "depth"} and not self.runtime("acestep_python"):
             QMessageBox.warning(self, t('無法處理'), t('執行元件缺失，請從「設定 → 管理安裝」準備所需元件'))
             return
         batch_id = uuid.uuid4().hex
@@ -2262,6 +2495,12 @@ class ConsumerWindow(QMainWindow):
         if self.active_op and self.active_op["mode"] == "lyrics":
             self.lyric_lookup.cancel()
             self._finish_operation(False, t('已取消'), show_error=False)
+        elif self.active_op and self.active_op['mode'] == 'depth':
+            if self.depth_batch_task:
+                self.depth_batch_task.cancel()
+                self.depth_batch_task = None
+            self.depth_batch_images.clear()
+            self._finish_operation(False, t('已取消'), show_error=False)
         else:
             self.jobs.cancel()
         self.process_status.setText(t('已取消目前與等待中的處理'))
@@ -2299,6 +2538,8 @@ class ConsumerWindow(QMainWindow):
                 self._continue_style(catalog)
             else:
                 self._enqueue_separation(song)
+        elif self.active_op['mode'] == 'depth':
+            self._start_depth_preprocess(song_id)
         else:
             request = self.active_op["request"]
             if catalog.get("separation"):

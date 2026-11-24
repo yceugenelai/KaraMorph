@@ -30,6 +30,20 @@ class ModelStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.prepare(['separation'], verify_only=True)
 
+    def test_depth_is_optional_and_imported_to_its_own_directory(self):
+        asset = dict(path='models/depth/Depth-Anything-V2-Small-hf/config.json',
+                     seed_path='config.json', size=len(self.payload),
+                     sha256=hashlib.sha256(self.payload).hexdigest())
+        store = ModelStore(root=self.root, manifest=dict(files=[self.asset, asset], ace_source_revision='test'))
+        seed = self.root / 'depth-seed'
+        seed.mkdir()
+        (seed / 'config.json').write_bytes(self.payload)
+        self.assertFalse(store.ready('depth'))
+        store.prepare(['depth'], import_root=seed)
+        self.assertTrue(store.ready('depth'))
+        self.assertEqual(store.target(asset), self.root / asset['path'])
+        self.assertFalse(store.ready('separation'))
+
     def test_bad_download_preserves_existing_file(self):
         target = self.store.target(self.asset)
         target.parent.mkdir(parents=True)

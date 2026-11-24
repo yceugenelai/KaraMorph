@@ -4,6 +4,27 @@
   "separation_revision": "ac9b0614ab3cd7f77219e18ba494dfd93956c348",
   "files": [
     {
+      "path": "models/depth/Depth-Anything-V2-Small-hf/config.json",
+      "seed_path": "config.json",
+      "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/config.json",
+      "sha256": "c56698d3643dde1f83ea2212759e6b31a22b8f827246a36dd007ee8a22b3ff75",
+      "size": 950
+    },
+    {
+      "path": "models/depth/Depth-Anything-V2-Small-hf/preprocessor_config.json",
+      "seed_path": "preprocessor_config.json",
+      "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/preprocessor_config.json",
+      "sha256": "d41175c0d889477ca8fc67191e540faef14baf6275157b3fdecf78469e6bbf84",
+      "size": 775
+    },
+    {
+      "path": "models/depth/Depth-Anything-V2-Small-hf/model.safetensors",
+      "seed_path": "model.safetensors",
+      "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf/resolve/5426e4f0f36572d16453bbda7a8389317b1bef99/model.safetensors",
+      "sha256": "3152477ce0d8d6978d76b995120de97cb5b928701fd0f817769f59e249a16b70",
+      "size": 99173660
+    },
+    {
       "path": "models/acestep/Qwen3-Embedding-0.6B/added_tokens.json",
       "seed_path": "Qwen3-Embedding-0.6B/added_tokens.json",
       "url": "https://huggingface.co/ACE-Step/Ace-Step1.5/resolve/19671f406d603126926c1b7e2adc169acbcade22/Qwen3-Embedding-0.6B/added_tokens.json",

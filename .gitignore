@@ -45,3 +45,5 @@ discussion.md
 input/
 dependabot-alerts.json
 backup/
+experiment_docs/
+experiments/

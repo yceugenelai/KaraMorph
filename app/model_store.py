@@ -37,7 +37,7 @@ class ModelStore:
             self.receipts = {}
 
     def assets(self, groups):
-        prefixes = {'separation': 'models/separation/', 'styling': 'models/acestep/'}
+        prefixes = {'separation': 'models/separation/', 'styling': 'models/acestep/', 'depth': 'models/depth/'}
         return [a for a in self.manifest['files'] if any(a['path'].startswith(prefixes[g]) for g in groups)]
 
     def target(self, asset):
@@ -46,7 +46,9 @@ class ModelStore:
             raise ValueError('Unsafe asset path')
         group = relative.parts[1]
         key = 'roformer_model_dir' if group == 'separation' else 'acestep_model_dir'
-        if self.root == ROOT:
+        if group == 'depth':
+            base = self.root / 'models' / group
+        elif self.root == ROOT:
             base = configured_path(self.settings, key)
         else:
             base = self.root / 'models' / group
