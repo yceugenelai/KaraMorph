@@ -27,6 +27,7 @@ PATHS = {
     'star_swap': f'<path d="M12 3L9.3 8.6l-6.1.9 4.4 4.3-1 6.1L12 17z" fill="{{color}}"/><path d="{STAR}"/>',
     'fullscreen': '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
     'restore': '<path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/>',
+    'depth_ready': '<rect x="2.5" y="3.5" width="19" height="17" rx="2"/><circle cx="8" cy="8.5" r="1.2"/><path d="M4.5 17l5-5 3.5 3 2.5-2.5 4 4.5"/>',
 }
 
 

@@ -190,12 +190,7 @@ class LyricsUiTests(unittest.TestCase):
             window.update_progress()
             update.assert_called_once()
         self.assertEqual(window.canvas.progress, 0)
-        saved = []
-        window.save_delay = saved.append
-        window.shift_lines(1)
-        self.assertEqual(saved, [200])
-        self.assertEqual(window.canvas.progress, -1)
-        window.adjust_delay(-200)
+        self.assertNotIn('字幕調整', [action.text() for action in window.more_menu.actions()])
         c.player.position.return_value = 90000
         window.update_progress()
         self.assertEqual(window.canvas.lines[int(window.canvas.progress)], '')
@@ -225,6 +220,7 @@ class LyricsUiTests(unittest.TestCase):
         c._preview_paths = Mock(return_value=(None, None))
         c._set_guide_source = Mock()
         c._karaoke_vocal_path = Mock()
+        c._background_images = Mock(return_value=[])
         c.queue_display_label = lambda item: ConsumerWindow.queue_display_label(c, item)
         ConsumerWindow._sync_karaoke_song(c, {'song_id': 'song', 'variant_id': 'slow', 'label': 'Slow'})
         kwargs = c.karaoke_window.set_song.call_args.kwargs
@@ -234,8 +230,8 @@ class LyricsUiTests(unittest.TestCase):
         task.cancel.assert_called_once()
         c._karaoke_vocal_path.assert_not_called()
         self.assertFalse(c.activity_tasks)
-        kwargs['save_delay'](600)
-        self.assertEqual(load_selected(c.workspace, 'song')[2]['offsets']['slow'], 600)
+        self.assertNotIn('save_delay', kwargs)
+        self.assertEqual(load_selected(c.workspace, 'song')[2]['offsets']['slow'], 400)
 
 
 if __name__ == '__main__':

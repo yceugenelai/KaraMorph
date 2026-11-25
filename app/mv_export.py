@@ -17,7 +17,8 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 
 from app.i18n import t
-from app.karaoke_window import KaraokeCanvas
+from app.karaoke_window import KaraokeCanvas, depth_mask_pixmap
+from app.depth_settings import depth_settings
 from runtime_config import ROOT
 
 RATE = 44100
@@ -128,7 +129,7 @@ def scene_state(scenes: list[Scene], position_ms: int, fade_ms: int):
 class MvRenderer:
     def __init__(self, size, scenes, timeline, speed=1.0, delay_ms=0, song_offset_ms=0,
                  fade_ms=1000, font_scale=1.3, center_ratio=5 / 6, color='#ffffff', motion=False, seed=0,
-                 song_map=None, song_rate=1.0, shift_ms=0):
+                 song_map=None, song_rate=1.0, shift_ms=0, depth_results=None, depth_options=None):
         self.width, self.height = size
         self.scenes, self.timeline = scenes, timeline
         self.speed, self.delay_ms, self.song_offset_ms, self.fade_ms = speed, delay_ms, song_offset_ms, fade_ms
@@ -142,6 +143,11 @@ class MvRenderer:
         self.canvas.synced = timeline is not None
         self.canvas.lines = list(timeline.lines) if timeline else []
         self.motion, self.seed = motion, seed
+        self.depth_results = dict(depth_results or {})
+        options = depth_settings(depth_options or {})
+        self.canvas.depth_strength = options['strength'] / 100
+        self.canvas.depth_speed = options['speed'] / 100
+        self._depth_masks = {}
         # How the take's clock maps to the song's: a recorded position map when the take has one
         # (it follows live tempo changes), otherwise a constant rate from a known start.
         self.song_rate, self.shift_ms = song_rate, shift_ms
@@ -164,6 +170,16 @@ class MvRenderer:
 
     def _draw(self, scene_index, progress, position=0) -> QImage:
         scene = self.scenes[scene_index]
+        data = self.depth_results.get(scene.image)
+        if data and scene.image not in self._depth_masks:
+            if len(self._depth_masks) >= 6:
+                self._depth_masks.pop(next(iter(self._depth_masks)))
+            self._depth_masks[scene.image] = depth_mask_pixmap(data['mask'])
+        mask = self._depth_masks.get(scene.image) if data else None
+        self.canvas.depth_mask = mask
+        self.canvas.motion_enabled = mask is not None
+        self.canvas.motion_ms = max(0, position - scene.start)
+        self.canvas.depth_motion_factor = float(data.get('motion_factor', 1.0)) if mask is not None else 1.0
         self.canvas.drift = ((position - scene.start) / max(1, scene.end - scene.start),
                              scene_index + self.seed * 101) if self.motion else None
         self.canvas.background = self._pixmap(scene.image)
@@ -181,7 +197,7 @@ class MvRenderer:
             return self._blank(progress)
         index, previous, blend = scene_state(self.scenes, position_ms, self.fade_ms)
         key = (index, previous, round(blend * 30) if previous is not None else 1, progress,
-               position_ms if self.motion else None)
+               position_ms if self.motion or self.depth_results else None)
         if key == self._last[0]:
             return self._last[1]
         image = self._draw(index, progress, position_ms)
@@ -208,6 +224,8 @@ class MvRenderer:
 
     def _blank(self, progress):
         self.canvas.background, self.canvas.scene, self.canvas.progress, self.canvas.drift = None, 0, progress, None
+        self.canvas.depth_mask = None
+        self.canvas.motion_enabled = False
         image = QImage(self.width, self.height, QImage.Format.Format_RGB32)
         self.canvas.render(image)
         return image

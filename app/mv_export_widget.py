@@ -7,14 +7,15 @@ from pathlib import Path
 
 import soundfile as sf
 from PySide6.QtCore import QSize, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaPlayer
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QHeaderView, QLabel, QListWidget, QListWidgetItem, QMessageBox, QProgressBar,
     QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from app.i18n import t
-from app.karaoke_assets import image_files, shared_images_dir, song_images_dir
+from app.karaoke_assets import DepthMotionTask, image_files, shared_images_dir, song_images_dir
+from app.depth_cache import lookup as lookup_depth
 from app.library_media import read_media
 from app.lyrics import effective_speed, load_selected
 from app.lyrics_sync import format_time, parse_time
@@ -22,6 +23,7 @@ from app.mv_export import (RESOLUTIONS, MvJob, MvRenderer, decode_audio, mix_rec
 from app.playlist import resolve_item
 from app.recordings import load_recordings
 from app.storage import load_catalog
+from runtime_config import ROOT
 
 
 
@@ -99,6 +101,9 @@ class MvExportWidget(QWidget):
         self.sources, self.images = [], []
         self.timeline, self.speed, self.delay, self.lyric_message = None, 1.0, 0, ''
         self.job, self._renderer, self._building, self._key = None, None, False, None
+        self.preparing_depth = False
+        self._depth_task, self._pending_export = None, None
+        self._depth_queue, self._depth_total = [], 0
         self._audio_cache, self._mix_count, self._play_dir = {}, 0, None
         self.player = QMediaPlayer(self)
         self.player_output = QAudioOutput(self)
@@ -190,10 +195,12 @@ class MvExportWidget(QWidget):
         self.table.itemChanged.connect(self._table_changed)
         layout.addWidget(self.table)
         row = QHBoxLayout()
+        self.segment_buttons = []
         for title, action in [(t('在預覽位置切段'), self.add_cut), (t('刪除選取段落'), self.delete_cut),
                               (t('重新隨機'), self.reshuffle)]:
             button = QPushButton(title)
             button.clicked.connect(lambda _=False, a=action: a())
+            self.segment_buttons.append(button)
             row.addWidget(button)
         row.addStretch(1)
         layout.addLayout(row)
@@ -242,6 +249,14 @@ class MvExportWidget(QWidget):
         self.motion.setChecked(True)
         self.motion.toggled.connect(lambda *_: self._invalidate())
         form.addRow(t('圖片動態'), self.motion)
+        self.depth_motion = QCheckBox(t('使用深度背景動畫'))
+        self.depth_motion.setChecked(bool(getattr(controller, 'settings', {}).get('background_depth_motion', True)))
+        self.depth_motion.setToolTip(t('深度動畫可與平移縮放同時使用；預覽使用已處理的遮罩，匯出前會處理其餘圖片。'))
+        self.depth_motion.toggled.connect(lambda *_: self._invalidate())
+        form.addRow(self.depth_motion)
+        self.depth_info = QLabel()
+        self.depth_info.setWordWrap(True)
+        form.addRow(self.depth_info)
         for widget in (self.vocal_gain, self.backing_gain, self.offset):
             widget.valueChanged.connect(lambda *_: self.restart_timer.start(400))
 
@@ -265,7 +280,7 @@ class MvExportWidget(QWidget):
     # ----- data -----
     def refresh(self):
         """Re-read sources, lyrics and images from disk (called whenever the tab is opened)."""
-        if self.job:
+        if self.job or self.preparing_depth:
             return
         self._building = True
         previous = self.source.currentData()
@@ -303,7 +318,7 @@ class MvExportWidget(QWidget):
         return getattr(getattr(self.controller, 'profiles', None), 'active', None)
 
     def set_song(self, song_id):
-        if self.job or song_id == self.song_id:
+        if self.job or self.preparing_depth or song_id == self.song_id:
             return
         self._stop_playback()
         self.song_id, self.song = song_id, self.controller.song_map.get(song_id, {})
@@ -492,15 +507,30 @@ class MvExportWidget(QWidget):
     def make_renderer(self, size):
         source = self.current()
         take = source['take'] if source and source['kind'] == 'recording' else {}
+        settings = dict(getattr(self.controller, 'settings', {}))
+        depth_results = {}
+        images = {scene.image for scene in self.scenes if scene.image is not None}
+        if self.depth_motion.isChecked():
+            model = ROOT / 'models/depth/Depth-Anything-V2-Small-hf'
+            cache = ROOT / '.app_data/cache/depth-motion'
+            for image in images:
+                result = lookup_depth(cache, image, model, settings)
+                if result and not QImage(result['mask']).isNull():
+                    depth_results[image] = result
+            self.depth_info.setText(t('深度遮罩已準備 {p0}／{p1} 張；匯出前會處理其餘圖片。',
+                                      p0=len(depth_results), p1=len(images)))
+        else:
+            self.depth_info.clear()
         return MvRenderer(size, self.scenes, self.timeline, self.speed, self.delay,
                           int(take.get('playback_start_offset_ms', 0)), round(self.fade.value() * 1000),
                           self.size.currentData(), self.pos.currentData(), self.color.currentData(),
                           self.motion.isChecked(), self.seed,
                           song_map=take.get('song_position_map'), song_rate=self.rate.value() if take else 1.0,
-                          shift_ms=self.offset.value() if take else 0)
+                          shift_ms=self.offset.value() if take else 0,
+                          depth_results=depth_results, depth_options=settings)
 
     def _draw_preview(self):
-        if not hasattr(self, 'scenes') or self.job:
+        if not hasattr(self, 'scenes') or self.job or self.preparing_depth:
             return
         if self._renderer is None:
             self._renderer = self.make_renderer(RESOLUTIONS['720p'])
@@ -517,7 +547,7 @@ class MvExportWidget(QWidget):
 
     def start_export(self):
         source = self.current()
-        if not source or not self.timeline or self.job:
+        if not source or not self.timeline or self.job or self.preparing_depth:
             return
         default = str(self.workspace / 'mv' / f'{self._safe_name()}.mp4')
         filename, _ = QFileDialog.getSaveFileName(self, t('匯出 MV'), default, 'MP4 (*.mp4)')
@@ -526,17 +556,104 @@ class MvExportWidget(QWidget):
         if not filename.lower().endswith('.mp4'):
             filename += '.mp4'
         self._stop_playback()
+        renderer = self.make_renderer(RESOLUTIONS[self.resolution.currentData()])
+        settings = dict(getattr(self.controller, 'settings', {}))
+        images = list(dict.fromkeys(scene.image for scene in renderer.scenes if scene.image is not None))
+        missing = [image for image in images if image not in renderer.depth_results] if self.depth_motion.isChecked() else []
+        if missing:
+            if getattr(self.controller, 'playing_item', None):
+                self.status.setText(t('請先停止唱歌，再為 MV 準備深度遮罩。'))
+                return
+            if (getattr(self.controller, 'active_op', None) or getattr(self.controller, 'pending_ops', None) or
+                    getattr(getattr(self.controller, 'models_dialog', None), 'worker', None)):
+                self.status.setText(t('請先等待歌曲處理或模型準備完成，再為 MV 準備深度遮罩。'))
+                return
+            from app.model_store import ModelStore
+            runtime = getattr(self.controller, 'runtime', None)
+            python = runtime('acestep_python') if callable(runtime) else None
+            if not ModelStore(settings).ready('depth') or not python:
+                self.status.setText(t('深度模型或執行元件未準備；請至模型與元件管理準備，或取消勾選深度背景動畫。'))
+                return
+            self._pending_export = {'source': source, 'filename': Path(filename), 'renderer': renderer,
+                                    'settings': settings, 'python': python}
+            self._depth_queue = missing
+            self._depth_total = len(missing)
+            self.preparing_depth = True
+            self._set_export_busy(True)
+            self.progress.setRange(0, self._depth_total)
+            self.progress.setValue(0)
+            self.progress.setVisible(True)
+            self._prepare_next_depth()
+            return
+        self._begin_export(source, Path(filename), renderer)
+
+    def _set_export_busy(self, busy):
+        controls = [self.source, self.bar, self.table, self.pool, self.use_shared, self.interval, self.fade,
+                    self.resolution, self.size, self.pos, self.color, self.motion, self.depth_motion,
+                    self.vocal_gain, self.backing_gain, self.offset, self.rate, self.play_button,
+                    *self.segment_buttons]
+        for control in controls:
+            control.setEnabled(not busy)
+        self.export_button.setEnabled(not busy and bool(self.current() and self.timeline))
+        self.cancel_button.setEnabled(busy)
+
+    def _prepare_next_depth(self):
+        if not self.preparing_depth or self._depth_task:
+            return
+        pending = self._pending_export
+        if not self._depth_queue:
+            self.preparing_depth = False
+            self._pending_export = None
+            self._begin_export(pending['source'], pending['filename'], pending['renderer'])
+            return
+        image = self._depth_queue.pop(0)
+        index = self._depth_total - len(self._depth_queue)
+        self.status.setText(t('正在準備深度遮罩 {p0}／{p1}：{p2}', p0=index, p1=self._depth_total, p2=image.name))
+        task = DepthMotionTask(image, pending['python'], ROOT / 'models/depth/Depth-Anything-V2-Small-hf',
+                               self, settings=pending['settings'])
+        self._depth_task = task
+        task.ready.connect(lambda _path, result, image=image: self._depth_prepared(image, result))
+        task.failed.connect(lambda message, image=image: self._depth_prepare_failed(image, message))
+        task.start()
+
+    def _depth_prepared(self, image, result):
+        if not self.preparing_depth or not self._pending_export:
+            return
+        self._depth_task = None
+        pending = self._pending_export
+        checked = lookup_depth(ROOT / '.app_data/cache/depth-motion', image,
+                               ROOT / 'models/depth/Depth-Anything-V2-Small-hf', pending['settings'])
+        if not checked or checked.get('mask') != result.get('mask') or QImage(checked['mask']).isNull():
+            self._depth_prepare_failed(image, t('圖片、模型或快取已變更，或遮罩無法讀取。'))
+            return
+        pending['renderer'].depth_results[image] = checked
+        self.progress.setValue(self._depth_total - len(self._depth_queue))
+        QTimer.singleShot(0, self._prepare_next_depth)
+
+    def _depth_prepare_failed(self, image, message):
+        if not self.preparing_depth:
+            return
+        self._depth_task = None
+        self.preparing_depth = False
+        self._depth_queue = []
+        self._pending_export = None
+        self.progress.setVisible(False)
+        self._set_export_busy(False)
+        self.status.setText(t('深度遮罩處理失敗：{p0} · {p1}', p0=image.name, p1=message))
+        self._invalidate()
+
+    def _begin_export(self, source, filename, renderer):
         self.status.setText(t('正在準備音訊…'))
-        self.export_button.setEnabled(False)
+        self._set_export_busy(True)
         try:
             audio = self._build_audio(source)
             if not len(audio):
                 raise ValueError(t('音訊內容是空的'))
-            renderer = self.make_renderer(RESOLUTIONS[self.resolution.currentData()])
-            self.job = MvJob(audio, renderer, Path(filename), self)
+            self.job = MvJob(audio, renderer, filename, self)
         except (OSError, RuntimeError, ValueError) as error:
             self.status.setText(t('匯出失敗：{p0}', p0=error))
-            self.export_button.setEnabled(True)
+            self.progress.setVisible(False)
+            self._set_export_busy(False)
             return
         self.job.progress.connect(self._progress)
         self.job.done.connect(self._done)
@@ -571,7 +688,7 @@ class MvExportWidget(QWidget):
 
     def _start_playback(self):
         source = self.current()
-        if not source or self.job:
+        if not source or self.job or self.preparing_depth:
             return
         stop = getattr(self.controller, '_stop_preview', None)
         if stop:
@@ -645,20 +762,29 @@ class MvExportWidget(QWidget):
         if job:
             job.deleteLater()
         self.progress.setVisible(False)
-        self.cancel_button.setEnabled(False)
-        self.export_button.setEnabled(bool(self.timeline))
+        self._set_export_busy(False)
         self.status.setText(t('MV 已輸出：{p0}', p0=message) if ok else t('匯出失敗：{p0}', p0=message))
         self._invalidate()
 
     def cancel_export(self):
-        if self.job:
+        if self.preparing_depth:
+            self.preparing_depth = False
+            if self._depth_task:
+                self._depth_task.cancel()
+                self._depth_task = None
+            self._depth_queue = []
+            self._pending_export = None
+            self.progress.setVisible(False)
+            self._set_export_busy(False)
+            self.status.setText(t('已取消'))
+            self._invalidate()
+        elif self.job:
             self.job.cancel()
 
     def dispose(self):
-        self.preview_timer.stop()
         self._stop_playback()
         self.player.setSource(QUrl())
         if self._play_dir:
             shutil.rmtree(self._play_dir, ignore_errors=True)
-        if self.job:
-            self.job.cancel()
+        self.cancel_export()
+        self.preview_timer.stop()

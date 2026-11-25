@@ -20,7 +20,7 @@ All versions of a song share one playback source: manual text, LRCLIB synced, do
 
 ## In the singing view
 
-- With an LRC, lines are highlighted in sync, and you can move the subtitles 0.2 s later or earlier in the singing window; the offset is remembered per version.
+- With an LRC, lines are highlighted in sync. Adjust timing in the song's Assets editor; previously saved per-version offsets remain in effect.
 - With plain text only, scrolling is estimated from vocal activity and is approximate.
 
 ## Timing off or lines missing?

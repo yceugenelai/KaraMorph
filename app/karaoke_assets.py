@@ -3,7 +3,7 @@
 from app.i18n import t
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, Signal
+from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 import sys
 import json
 import hashlib
@@ -13,6 +13,79 @@ from app.vocal_activity import cache_path, read_cache
 from app.storage import song_dir
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".svg"}
+
+
+class DepthMotionTask(QObject):
+    """Run optional depth processing outside the playback/UI process."""
+    ready = Signal(str, object)
+    failed = Signal(str)
+
+    def __init__(self, image, python, model, parent=None, settings=None):
+        super().__init__(parent)
+        self.image = Path(image)
+        self.python = Path(python)
+        self.model = Path(model)
+        self.settings = dict(settings or {})
+        self.done = False
+        self.process = QProcess(self)
+        self.process.setWorkingDirectory(str(ROOT))
+        self.process.finished.connect(self._finished)
+        self.process.errorOccurred.connect(self._error)
+        self.timeout = QTimer(self)
+        self.timeout.setSingleShot(True)
+        self.timeout.timeout.connect(self._timed_out)
+
+    def start(self):
+        from app.depth_settings import mask_options
+        options = mask_options(self.settings)
+        self.timeout.start(300000)
+        args = [str(ROOT / 'workers/depth_motion_worker.py'),
+                           '--image', str(self.image), '--model', str(self.model),
+                           '--cache', str(ROOT / '.app_data/cache/depth-motion'),
+                           '--minimum', str(options['minimum']), '--maximum', str(options['maximum']),
+                           '--person-expand', str(options['person_expand']),
+                           '--landscape-expand', str(options['landscape_expand'])]
+        if not options['solid']:
+            args.append('--soft-mask')
+        self.process.start(str(self.python), args)
+
+    def _timed_out(self):
+        if self.done:
+            return
+        self.done = True
+        self.process.kill()
+        self.process.waitForFinished(1000)
+        self.failed.emit('Depth processing timed out')
+        self.deleteLater()
+
+    def _error(self, error):
+        if error == QProcess.ProcessError.FailedToStart and not self.done:
+            self.done = True
+            self.failed.emit(self.process.errorString())
+            self.deleteLater()
+
+    def _finished(self, code, status):
+        if self.done:
+            return
+        self.done = True
+        try:
+            if code != 0:
+                raise ValueError(bytes(self.process.readAllStandardError()).decode('utf-8', errors='replace')[-2000:])
+            lines = bytes(self.process.readAllStandardOutput()).decode('utf-8', errors='replace').splitlines()
+            result = json.loads(lines[-1])
+            if not Path(result['mask']).is_file():
+                raise ValueError('Depth mask missing')
+            self.ready.emit(str(self.image), result)
+        except (ValueError, KeyError, IndexError, OSError) as error:
+            self.failed.emit(str(error))
+        self.deleteLater()
+
+    def cancel(self):
+        self.done = True
+        if self.process.state() != QProcess.ProcessState.NotRunning:
+            self.process.kill()
+            self.process.waitForFinished(1000)
+        self.deleteLater()
 
 
 def lyrics_path(workspace: Path, song_id: str) -> Path:

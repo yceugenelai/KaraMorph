@@ -6,12 +6,14 @@ from pathlib import Path
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import numpy as np
-from PySide6.QtCore import QEventLoop, QTimer
+import soundfile as sf
+from PySide6.QtCore import QEventLoop, QObject, QTimer, Signal
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication, QWidget
 
 from app.lyrics import parse_lrc
 from app.mv_export import (FPS, RATE, MvJob, MvRenderer, Scene, find_ffmpeg, mix_recording, plan_scenes, scene_state)
+from unittest.mock import patch
 
 
 class SceneTests(unittest.TestCase):
@@ -114,11 +116,215 @@ class EncodeTests(unittest.TestCase):
             self.assertEqual(result, [False])
             self.assertFalse(output.exists() or output.with_name('mv.partial.mp4').exists())
 
+    def test_depth_renderer_animates_selected_area_and_keeps_crossfade(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            image = QImage(640, 360, QImage.Format.Format_RGB32)
+            image.fill(QColor('blue'))
+            for x in range(0, 640, 12):
+                for y in range(360):
+                    image.setPixelColor(x, y, QColor('white'))
+            first = root / 'first.png'
+            self.assertTrue(image.save(str(first)))
+            image.fill(QColor('red'))
+            second = root / 'second.png'
+            self.assertTrue(image.save(str(second)))
+            mask = QImage(640, 360, QImage.Format.Format_Grayscale8)
+            mask.fill(QColor('white'))
+            mask_path = root / 'mask.png'
+            self.assertTrue(mask.save(str(mask_path)))
+            data = {'mask': str(mask_path), 'motion_factor': 1.0}
+            scenes = [Scene(0, 2000, first), Scene(2000, 4000, second)]
+            renderer = MvRenderer((640, 360), scenes, None, motion=True, fade_ms=1000,
+                                  depth_results={first: data, second: data})
+            before = renderer.frame(0).copy()
+            after = renderer.frame(1200).copy()
+            self.assertNotEqual(before, after)
+            self.assertIsNotNone(renderer.canvas.depth_mask)
+            self.assertIsNotNone(renderer.canvas.drift)
+            depth_only = MvRenderer((640, 360), scenes, None, motion=False,
+                                    depth_results={first: data, second: data})
+            depth_frame = depth_only.frame(1200).copy()
+            self.assertIsNone(depth_only.canvas.drift)
+            self.assertNotEqual(after, depth_frame)
+            pan_only = MvRenderer((640, 360), scenes, None, motion=True)
+            pan_frame = pan_only.frame(1200).copy()
+            self.assertNotEqual(after, pan_frame)
+            mixed = renderer.frame(2500)
+            color = mixed.pixelColor(10, 10)
+            self.assertGreater(color.red(), 60)
+            self.assertGreater(color.blue(), 60)
+
+
+class FakeDepthTask(QObject):
+    ready = Signal(str, object)
+    failed = Signal(str)
+
+    def __init__(self, image, python, model, parent=None, settings=None):
+        super().__init__(parent)
+        self.image = image
+        self.cancelled = False
+
+    def start(self):
+        pass
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class FakeMvJob(QObject):
+    progress = Signal(int, int)
+    done = Signal(bool, str)
+
+    def __init__(self, audio, renderer, output, parent=None):
+        super().__init__(parent)
+        self.renderer = renderer
+        self.started = False
+
+    def start(self):
+        self.started = True
+
+    def cancel(self):
+        self.done.emit(False, 'cancelled')
+
 
 class WidgetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def depth_widget(self, root):
+        from app.karaoke_assets import song_images_dir
+        from app.lyrics import assets_dir
+        from app.mv_export_widget import MvExportWidget
+        sf.write(str(root / 'song.wav'), np.zeros((RATE, 2), dtype=np.float32), RATE)
+        folder = song_images_dir(root, 'song')
+        folder.mkdir(parents=True)
+        image = QImage(640, 360, QImage.Format.Format_RGB32)
+        image.fill(QColor('blue'))
+        path = folder / 'own.png'
+        image.save(str(path))
+        assets = assets_dir(root, 'song')
+        (assets / 'local.lrc').write_text('[00:00]hello', encoding='utf-8')
+        (assets / 'lyric_sources.json').write_text('{"source":"local","offsets":{}}', encoding='utf-8')
+        controller = QWidget()
+        controller.workspace = root
+        controller.song_map = {'song': {'title': 'T', 'path': str(root / 'song.wav'), 'available': True}}
+        controller.settings = {}
+        controller.runtime = lambda _key: root / 'python.exe'
+        return controller, MvExportWidget(controller, 'song'), path
+
+    def test_depth_export_prepares_missing_mask_before_encoding(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            controller, widget, image = self.depth_widget(root)
+            self.assertTrue(widget.depth_motion.isChecked())
+            mask = QImage(32, 32, QImage.Format.Format_Grayscale8)
+            mask.fill(QColor('white'))
+            mask_path = root / 'mask.png'
+            mask.save(str(mask_path))
+            data = {'mask': str(mask_path), 'motion_factor': 1.0}
+            stored = {}
+            with patch('app.mv_export_widget.QFileDialog.getSaveFileName', return_value=(str(root / 'out.mp4'), '')), \
+                 patch('app.model_store.ModelStore.ready', return_value=True), \
+                 patch('app.mv_export_widget.lookup_depth', side_effect=lambda *_: stored.get('result')), \
+                 patch('app.mv_export_widget.DepthMotionTask', FakeDepthTask), \
+                 patch('app.mv_export_widget.MvJob', FakeMvJob), \
+                 patch.object(widget, '_build_audio', return_value=np.zeros((RATE, 2), dtype=np.float32)):
+                widget.start_export()
+                self.assertTrue(widget.preparing_depth)
+                self.assertIsNone(widget.job)
+                task = widget._depth_task
+                stored['result'] = data
+                task.ready.emit(str(image), data)
+                loop = QEventLoop()
+                QTimer.singleShot(100, loop.quit)
+                loop.exec()
+                self.assertFalse(widget.preparing_depth)
+                self.assertTrue(widget.job.started)
+                self.assertEqual(widget.job.renderer.depth_results[image], data)
+                widget.cancel_export()
+            widget.dispose()
+            controller.close()
+
+    def test_depth_preparation_can_be_cancelled(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            controller, widget, _ = self.depth_widget(root)
+            with patch('app.mv_export_widget.QFileDialog.getSaveFileName', return_value=(str(root / 'out.mp4'), '')), \
+                 patch('app.model_store.ModelStore.ready', return_value=True), \
+                 patch('app.mv_export_widget.lookup_depth', return_value=None), \
+                 patch('app.mv_export_widget.DepthMotionTask', FakeDepthTask):
+                widget.start_export()
+                task = widget._depth_task
+                self.assertTrue(widget.preparing_depth)
+                widget.cancel_export()
+                self.assertTrue(task.cancelled)
+                self.assertFalse(widget.preparing_depth)
+                self.assertIsNone(widget.job)
+                self.assertFalse((root / 'out.mp4').exists())
+            widget.dispose()
+            controller.close()
+
+    def test_failed_depth_preparation_does_not_export(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            controller, widget, _ = self.depth_widget(root)
+            with patch('app.mv_export_widget.QFileDialog.getSaveFileName', return_value=(str(root / 'out.mp4'), '')), \
+                 patch('app.model_store.ModelStore.ready', return_value=True), \
+                 patch('app.mv_export_widget.lookup_depth', return_value=None), \
+                 patch('app.mv_export_widget.DepthMotionTask', FakeDepthTask), \
+                 patch('app.mv_export_widget.MvJob', FakeMvJob):
+                widget.start_export()
+                widget._depth_task.failed.emit('test error')
+                self.assertFalse(widget.preparing_depth)
+                self.assertIsNone(widget.job)
+                self.assertIn('test error', widget.status.text())
+                self.assertTrue(widget.export_button.isEnabled())
+                self.assertFalse((root / 'out.mp4').exists())
+            widget.dispose()
+            controller.close()
+
+    def test_explicit_depth_opt_out_uses_regular_export(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            controller, widget, _ = self.depth_widget(root)
+            widget.depth_motion.setChecked(False)
+            with patch('app.mv_export_widget.QFileDialog.getSaveFileName', return_value=(str(root / 'out.mp4'), '')), \
+                 patch('app.mv_export_widget.DepthMotionTask', FakeDepthTask), \
+                 patch('app.mv_export_widget.MvJob', FakeMvJob), \
+                 patch.object(widget, '_build_audio', return_value=np.zeros((RATE, 2), dtype=np.float32)):
+                widget.start_export()
+                self.assertFalse(widget.preparing_depth)
+                self.assertTrue(widget.job.started)
+                self.assertEqual(widget.job.renderer.depth_results, {})
+                widget.cancel_export()
+            widget.dispose()
+            controller.close()
+
+    def test_cached_depth_is_used_for_preview_and_export_without_processing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            controller, widget, image = self.depth_widget(root)
+            mask = QImage(32, 32, QImage.Format.Format_Grayscale8)
+            mask.fill(QColor('white'))
+            mask_path = root / 'mask.png'
+            mask.save(str(mask_path))
+            data = {'mask': str(mask_path), 'motion_factor': 1.0}
+            with patch('app.mv_export_widget.QFileDialog.getSaveFileName', return_value=(str(root / 'out.mp4'), '')), \
+                 patch('app.mv_export_widget.lookup_depth', return_value=data), \
+                 patch('app.mv_export_widget.DepthMotionTask') as task, \
+                 patch('app.mv_export_widget.MvJob', FakeMvJob), \
+                 patch.object(widget, '_build_audio', return_value=np.zeros((RATE, 2), dtype=np.float32)):
+                renderer = widget.make_renderer((640, 360))
+                self.assertEqual(renderer.depth_results[image], data)
+                widget.start_export()
+                task.assert_not_called()
+                self.assertTrue(widget.job.started)
+                self.assertEqual(widget.job.renderer.depth_results[image], data)
+                widget.cancel_export()
+            widget.dispose()
+            controller.close()
 
     def test_widget_without_lrc_blocks_export_and_with_lrc_previews(self):
         from app.lyrics import assets_dir

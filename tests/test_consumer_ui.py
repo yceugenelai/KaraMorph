@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PySide6.QtCore import QByteArray, QObject, QPoint, Qt, Signal, QUrl
+from PySide6.QtCore import QByteArray, QObject, QPoint, QTimer, Qt, Signal, QUrl
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QMessageBox, QPushButton, QStyleFactory
 from PySide6.QtTest import QTest
 
@@ -163,7 +163,7 @@ class ConsumerUiTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.settings = {'workspace': str(self.root / 'outputs'), 'source_dir': ''}
+        self.settings = {'workspace': str(self.root / 'outputs'), 'source_dir': '', 'background_depth_motion': False}
         self.patches = [patch('app.consumer.load_settings', return_value=self.settings),
                         patch('app.consumer.save_settings'), patch('app.consumer.data_dir', return_value=self.root),
                         patch('app.consumer.QMessageBox.information')]
@@ -322,6 +322,199 @@ class ConsumerUiTests(unittest.TestCase):
         self.assertIsNone(self.window.active_op)
         self.assertEqual(self.window.pending_ops, [])
         self.assertIn('跳過 3', self.window.process_status.text())
+
+    def test_depth_preprocess_uses_selected_backgrounds_and_continues_after_failure(self):
+        self.populate(1)
+        first, second = self.root / 'first.png', self.root / 'second.png'
+        self.window.active_op = {'song_id': 's0', 'mode': 'depth', 'request': {}}
+        with patch.object(self.window, '_background_images', return_value=[first, second]), \
+             patch.object(self.window, 'runtime', return_value=self.root / 'python.exe'), \
+             patch('app.consumer.DepthMotionTask') as task_class, \
+             patch.object(self.window, '_finish_operation') as finish:
+            self.window._start_depth_preprocess('s0')
+            self.assertEqual(task_class.call_args.args[0], first)
+            self.window._depth_preprocess_finished(first, 'failed image')
+            QTest.qWait(20)
+            self.assertEqual(task_class.call_args.args[0], second)
+            self.window._depth_preprocess_finished()
+            QTest.qWait(20)
+            self.assertFalse(finish.call_args.args[0])
+            self.assertIn('完成 1／2', finish.call_args.args[1])
+            self.assertIn('first.png', finish.call_args.args[1])
+        self.window.active_op = None
+        self.window.depth_batch_task = None
+
+    def test_depth_preprocess_and_playback_share_background_selection(self):
+        from app.karaoke_assets import song_images_dir
+        self.populate(1)
+        local_dir = song_images_dir(self.window.workspace, 's0')
+        shared_dir = self.root / 'shared'
+        local_dir.mkdir(parents=True)
+        shared_dir.mkdir()
+        local, shared, cover = local_dir / 'song.png', shared_dir / 'shared.png', self.root / 'cover.png'
+        for path in (local, shared, cover):
+            path.touch()
+        with patch('app.consumer.shared_images_dir', return_value=shared_dir), \
+             patch('app.consumer.cache_background_cover', return_value=cover):
+            self.window.settings['background_mode'] = 'combined'
+            self.assertEqual(self.window._background_images('s0'), [local, shared, cover])
+            self.window.settings['background_mode'] = 'song_first'
+            self.assertEqual(self.window._background_images('s0'), [local, cover])
+            self.window.settings['background_mode'] = 'shared_only'
+            self.assertEqual(self.window._background_images('s0'), [shared])
+
+    def test_depth_preprocess_requires_stopped_playback(self):
+        self.window.playing_item = {'song_id': 's0'}
+        with patch.object(self.window, '_submit') as submit:
+            self.window.batch_depth_motion()
+            submit.assert_not_called()
+        self.window.playing_item = None
+
+    def test_song_context_menu_prepares_clicked_song(self):
+        self.populate(1)
+        item = self.window.tree.topLevelItem(0)
+        point = self.window.tree.visualItemRect(item).center()
+        with patch.object(self.window, 'prepare_depth_motion') as prepare:
+            def trigger_action():
+                menu = QApplication.activePopupWidget()
+                action = next(action for action in menu.actions() if action.text() == '預處理背景動畫')
+                action.trigger()
+                menu.close()
+            QTimer.singleShot(0, trigger_action)
+            self.window._context_menu(point)
+            prepare.assert_called_once_with(['s0'])
+
+    def test_song_depth_icon_reports_partial_and_complete_cache(self):
+        self.populate(1)
+        (self.root / '.app_data/cache/depth-motion/index').mkdir(parents=True)
+        images = [self.root / 'one.png', self.root / 'two.png']
+        with patch('app.consumer.ROOT', self.root), \
+             patch('app.model_store.ModelStore.ready', return_value=True), \
+             patch.object(self.window, '_background_images', return_value=images), \
+             patch('app.consumer.image_files', return_value=images), \
+             patch('app.depth_cache.has_index', return_value=True), \
+             patch('app.depth_cache.lookup', side_effect=lambda cache, image, model, settings: {} if image == images[0] else None):
+            self.window.refresh_tree()
+            item = self.window.tree.topLevelItem(0)
+            from app.consumer import DEPTH_STATUS_ROLE
+            self.assertEqual(item.data(1, DEPTH_STATUS_ROLE), 'partial')
+            self.assertIn('1／2', item.toolTip(1))
+
+    def test_strength_change_preserves_preprocessed_indicator(self):
+        from app.consumer import DEPTH_STATUS_ROLE
+        from app.depth_cache import remember
+        self.populate(1)
+        source = self.root / 'input'
+        source.mkdir()
+        self.window.source_field.setText(str(source))
+        image = self.root / 'background.png'
+        image.touch()
+        model = self.root / 'models/depth/Depth-Anything-V2-Small-hf'
+        model.mkdir(parents=True)
+        for name in ('config.json', 'preprocessor_config.json', 'model.safetensors'):
+            (model / name).touch()
+        cache = self.root / '.app_data/cache/depth-motion'
+        cache.mkdir(parents=True)
+        mask = cache / 'mask.png'
+        mask.touch()
+        remember(cache, image, model, self.window.settings, {'mask': str(mask)})
+        with patch('app.consumer.ROOT', self.root), \
+             patch('app.model_store.ModelStore.ready', return_value=True), \
+             patch.object(self.window, '_background_images', return_value=[image]), \
+             patch('app.consumer.image_files', return_value=[image]), \
+             patch.object(self.window, 'scan_library'):
+            self.window.refresh_tree()
+            self.assertEqual(self.window.tree.topLevelItem(0).data(1, DEPTH_STATUS_ROLE), 'complete')
+            self.window.depth_fields['strength'].setValue(25)
+            self.window.save_settings()
+            self.assertEqual(self.window.tree.topLevelItem(0).data(1, DEPTH_STATUS_ROLE), 'complete')
+
+    def test_scrolling_does_not_change_depth_settings(self):
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QWheelEvent
+        field = self.window.depth_fields['landscape_expand']
+        original = field.value()
+        event = QWheelEvent(QPointF(2, 2), QPointF(2, 2), QPoint(), QPoint(0, 120),
+                            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                            Qt.ScrollPhase.ScrollUpdate, False)
+        QApplication.sendEvent(field, event)
+        self.assertEqual(field.value(), original)
+        field.stepUp()
+        self.assertEqual(field.value(), original + 1)
+
+    def test_depth_indicator_is_small_and_after_status_text(self):
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QFontMetrics, QImage, QPainter
+        from PySide6.QtWidgets import QStyleOptionViewItem
+        from app.consumer import DEPTH_STATUS_ROLE
+        self.populate(1)
+        item = self.window.tree.topLevelItem(0)
+        item.setText(1, 'Ready')
+        item.setData(1, DEPTH_STATUS_ROLE, 'complete')
+        index = self.window.tree.indexFromItem(item, 1)
+        option = QStyleOptionViewItem()
+        option.initFrom(self.window.tree)
+        option.rect = QRect(0, 0, 200, 30)
+        surface = QImage(200, 30, QImage.Format.Format_ARGB32)
+        surface.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(surface)
+        marker = Mock()
+        try:
+            with patch('app.consumer.icon', return_value=marker):
+                self.window.tree.itemDelegateForColumn(1).paint(painter, option, index)
+            rect = marker.paint.call_args.args[1]
+            self.assertEqual(rect.size().width(), 15)
+            self.assertGreater(rect.left(), QFontMetrics(option.font).horizontalAdvance('Ready'))
+            self.assertLessEqual(rect.right(), option.rect.right())
+        finally:
+            painter.end()
+
+    def test_animation_settings_are_expandable_and_saved(self):
+        source = self.root / 'input'
+        source.mkdir()
+        self.window.source_field.setText(str(source))
+        self.window.show()
+        self.assertFalse(self.window.background_animation_panel.isVisible())
+        self.window.background_animation_toggle.click()
+        self.window.centralWidget().setCurrentWidget(self.window.settings_page)
+        self.app.processEvents()
+        self.assertTrue(self.window.background_animation_panel.isVisible())
+        self.window.depth_fields['strength'].setValue(62)
+        self.window.depth_fields['person_expand'].setValue(20)
+        self.window.depth_solid.setChecked(False)
+        with patch('app.consumer.save_settings') as save, patch.object(self.window, 'scan_library'):
+            self.window.save_settings()
+            self.assertEqual(save.call_args.args[0]['depth_strength'], 62)
+            self.assertEqual(save.call_args.args[0]['depth_person_expand'], 20)
+            self.assertFalse(save.call_args.args[0]['depth_solid'])
+
+    def test_animation_settings_reject_inverted_coverage(self):
+        self.window.depth_fields['minimum'].setValue(80)
+        self.window.depth_fields['maximum'].setValue(70)
+        with patch('app.consumer.save_settings') as save, patch('app.consumer.QMessageBox.warning') as warning:
+            self.window.save_settings()
+            save.assert_not_called()
+            warning.assert_called_once()
+
+    def test_depth_animation_defaults_on_but_respects_saved_opt_out(self):
+        settings = {'workspace': str(self.root / 'outputs'), 'source_dir': ''}
+        with patch('app.consumer.load_settings', return_value=settings):
+            other = ConsumerWindow()
+            self.assertTrue(other.background_depth_motion.isChecked())
+            other.close()
+            other.deleteLater()
+        self.assertFalse(self.window.background_depth_motion.isChecked())
+
+    def test_cancel_depth_preprocess_stops_task(self):
+        self.populate(1)
+        self.window.active_op = {'song_id': 's0', 'mode': 'depth', 'request': {}}
+        task = Mock()
+        self.window.depth_batch_task = task
+        self.window.depth_batch_images = [self.root / 'image.png']
+        self.window.cancel_batch()
+        task.cancel.assert_called_once()
+        self.assertIsNone(self.window.depth_batch_task)
+        self.assertFalse(self.window.depth_batch_images)
 
     def test_resume_playlist_duplicates_missing_and_empty(self):
         items = [dict(song_id='missing', variant_id='fx', label='Jazz')] * 2
@@ -1046,6 +1239,197 @@ class ConsumerUiTests(unittest.TestCase):
         view.set_song('No images', '', [], 20000)
         view.set_background_motion(True)
         self.assertFalse(view.motion_timer.isActive())
+        view.close()
+
+    def test_background_crossfade_blends_without_capturing_lyrics(self):
+        from PySide6.QtGui import QColor, QPixmap
+        from app.karaoke_window import KaraokeCanvas
+        canvas = KaraokeCanvas()
+        canvas.resize(640, 360)
+        canvas.background = QPixmap(640, 360)
+        canvas.background.fill(QColor('red'))
+        canvas.lines = ['visible lyric']
+        old = canvas.capture_background()
+        canvas.background = QPixmap(640, 360)
+        canvas.background.fill(QColor('blue'))
+        canvas.start_background_transition(old)
+        self.assertEqual(canvas.grab().toImage().pixelColor(10, 10).name(), '#ff0000')
+        canvas.advance_background_transition(1000)
+        color = canvas.grab().toImage().pixelColor(10, 10)
+        self.assertTrue(125 <= color.red() <= 130)
+        self.assertTrue(125 <= color.blue() <= 130)
+        # The captured frame contains no text, including where lyrics are drawn.
+        self.assertEqual(old.toImage().pixelColor(320, 300).name(), '#ff0000')
+        canvas.advance_background_transition(1000)
+        self.assertIsNone(canvas.previous_background_frame)
+        self.assertEqual(canvas.grab().toImage().pixelColor(10, 10).name(), '#0000ff')
+        canvas.close()
+
+    def test_background_crossfade_pauses_and_runs_with_motion_disabled(self):
+        from PySide6.QtGui import QColor, QPixmap
+        view = self.karaoke_fixture()
+        player = self.window.player
+        player.position.return_value = 0
+        player.duration.return_value = 20000
+        paths = []
+        for name in ('red', 'blue'):
+            pix = QPixmap(640, 360)
+            pix.fill(QColor(name))
+            path = self.root / (name + '.png')
+            self.assertTrue(pix.save(str(path)))
+            paths.append(path)
+        view.set_background_motion(False)
+        view.set_song('Song', '', paths, 20000)
+        player.playbackState.return_value = QMediaPlayer.PlaybackState.PlayingState
+        view.next_background()
+        self.assertIsNotNone(view.canvas.previous_background_frame)
+        self.assertTrue(view.motion_timer.isActive())
+        QTest.qWait(120)
+        self.assertGreater(view.canvas.transition_ms, 0)
+        player.playbackState.return_value = QMediaPlayer.PlaybackState.PausedState
+        view._sync_background_motion()
+        paused_at = view.canvas.transition_ms
+        self.assertFalse(view.motion_timer.isActive())
+        QTest.qWait(100)
+        self.assertEqual(view.canvas.transition_ms, paused_at)
+        player.playbackState.return_value = QMediaPlayer.PlaybackState.PlayingState
+        view._sync_background_motion()
+        self.assertTrue(view.motion_timer.isActive())
+        view.canvas.advance_background_transition(2000)
+        view._sync_background_motion()
+        self.assertFalse(view.motion_timer.isActive())
+        view.close()
+
+    def test_single_background_keeps_motion_without_crossfade(self):
+        from PySide6.QtGui import QColor, QPixmap
+        view = self.karaoke_fixture()
+        pix = QPixmap(640, 360)
+        pix.fill(QColor('red'))
+        path = self.root / 'single.png'
+        self.assertTrue(pix.save(str(path)))
+        view.set_song('Song', '', [path], 20000)
+        view.canvas.motion_ms = 12000
+        view.next_background()
+        self.assertEqual(view.canvas.motion_ms, 0)
+        self.assertIsNone(view.canvas.previous_background_frame)
+        view.canvas.depth_mask = QPixmap(640, 360)
+        view.canvas.depth_mask.fill(QColor('white'))
+        view.canvas.motion_ms = 12000
+        view.next_background()
+        self.assertEqual(view.canvas.motion_ms, 12000)
+        view.close()
+
+    def test_depth_mask_is_opaque_only_on_selected_pixels_and_falls_back(self):
+        from PySide6.QtGui import QColor, QImage, QPixmap
+        view = self.karaoke_fixture()
+        image = QImage(100, 60, QImage.Format.Format_RGB32)
+        image.fill(QColor('black'))
+        for y in range(60):
+            for x in range(50, 100):
+                image.setPixelColor(x, y, QColor('white'))
+        path = self.root / 'depth-mask.png'
+        self.assertTrue(image.save(str(path)))
+        view._apply_depth_result({'mask': str(path), 'motion_factor': .35,
+                                  'method': 'inverse', 'coverage': .25})
+        result = view.canvas.depth_mask.toImage()
+        self.assertEqual(result.pixelColor(20, 20).alpha(), 0)
+        self.assertEqual(result.pixelColor(80, 20).alpha(), 255)
+        self.assertEqual(view.canvas.depth_motion_factor, .35)
+        self.assertIn('A3-2', view.background_status.text())
+        self.assertIn('25%', view.background_status.text())
+        view.canvas.background = QPixmap(100, 60)
+        view.canvas.background.fill(QColor('blue'))
+        view.canvas.motion_enabled = True
+        view.canvas.grab()
+        view.set_depth_motion(False)
+        self.assertIsNone(view.canvas.depth_mask)
+        self.assertIn('一般動態', view.background_status.text())
+        self.assertEqual(view.motion_timer.interval(), 100)
+        view.close()
+
+    def test_depth_mask_preserves_soft_alpha(self):
+        from PySide6.QtGui import QColor, QImage
+        view = self.karaoke_fixture()
+        image = QImage(16, 16, QImage.Format.Format_Grayscale8)
+        image.fill(QColor(100, 100, 100))
+        path = self.root / 'soft-mask.png'
+        self.assertTrue(image.save(str(path)))
+        view._apply_depth_result({'mask': str(path), 'coverage': .5})
+        self.assertEqual(view.canvas.depth_mask.toImage().pixelColor(8, 8).alpha(), 100)
+        view.close()
+
+    def test_depth_motion_interpolates_across_strip_boundaries(self):
+        from PySide6.QtGui import QColor, QImage, QPixmap
+        from app.karaoke_window import KaraokeCanvas
+        canvas = KaraokeCanvas()
+        canvas.resize(640, 360)
+        source = QImage(640, 360, QImage.Format.Format_RGB32)
+        for y in range(360):
+            shade = y * 255 // 360
+            for x in range(640):
+                source.setPixelColor(x, y, QColor(shade, shade, shade))
+        canvas.background = QPixmap.fromImage(source)
+        canvas.depth_mask = QPixmap(640, 360)
+        canvas.depth_mask.fill(QColor('white'))
+        canvas.motion_enabled = True
+        canvas.motion_ms = 12345
+        image = canvas.grab().toImage()
+        values = [image.pixelColor(300, y).red() for y in range(20, 180)]
+        self.assertLessEqual(max(abs(b-a) for a, b in zip(values, values[1:])), 3)
+        canvas.close()
+
+    def test_depth_result_for_previous_image_is_not_applied(self):
+        view = self.karaoke_fixture()
+        view.depth_enabled = True
+        old_key = ('old.png', 1, 1)
+        result = {'mask': 'old.png', 'motion_factor': 1.0}
+        with patch.object(view, '_depth_current_key', return_value=('new.png', 1, 1)), \
+             patch.object(view, '_apply_depth_result') as apply, \
+             patch.object(view, '_start_depth_current') as start:
+            view._depth_ready(old_key, result)
+            apply.assert_not_called()
+            start.assert_called_once()
+            self.assertEqual(view._depth_results[old_key], result)
+        task = Mock()
+        view._depth_task = task
+        view.set_depth_motion(False)
+        task.cancel.assert_called_once()
+        self.assertIsNone(view._depth_task)
+        view.close()
+
+    def test_depth_status_reports_processing_and_failure(self):
+        view = self.karaoke_fixture()
+        view.depth_enabled = True
+        view.canvas.motion_enabled = True
+        view._depth_task = Mock()
+        view._start_depth_current()
+        self.assertIn('等待深度處理', view.background_status.text())
+        key = ('bad.png', 1, 1)
+        with patch.object(view, '_depth_current_key', return_value=key):
+            view._depth_error(key, 'test failure')
+        self.assertIn('深度處理失敗', view.background_status.text())
+        self.assertEqual(view.background_status.toolTip(), 'test failure')
+        view.close()
+
+    def test_background_waits_briefly_for_current_depth(self):
+        view = self.karaoke_fixture()
+        view.depth_enabled = True
+        view.images = [self.root / 'first.png', self.root / 'second.png']
+        view.image_index = 0
+        key = ('first', 1, 1)
+        view._depth_task = Mock()
+        view._depth_task_key = key
+        view._depth_task_started = time.monotonic()
+        with patch.object(view, '_depth_current_key', return_value=key), \
+             patch.object(view, '_advance_background') as advance, \
+             patch.object(view, '_show_background'):
+            view.next_background()
+            advance.assert_not_called()
+            self.assertEqual(view.background_timer.interval(), 1000)
+            view._depth_task_started = time.monotonic() - 26
+            view.next_background()
+            advance.assert_called_once()
+        view._depth_task = None
         view.close()
 
     def test_output_test_uses_exclusive_device(self):

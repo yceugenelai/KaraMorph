@@ -34,8 +34,8 @@ Open the **MV export** tab, to the right of **Songs**, and pick the song at the 
    - By default the whole song **auto-rotates**: images appear in random order with crossfades. Set how long each stays, or click **Reshuffle**.
    - To change the image at a certain point, preview that point and click **Cut at preview position**, then pick a fixed image for the new segment or keep it on auto rotate.
    - Check or uncheck images under **Images used by auto rotate**. Images come from this song's folder and the shared folder; **Include shared images in the automatic rotation** is off by default (only this song's images are used); tick it to add the shared images.
-4. **Output settings**: **Image motion** (on by default) adds a slow random pan and zoom in/out to each image, like the singing view; resolution (540p / 720p / 1080p, 30 fps), subtitle size, subtitle position (bottom / middle) and current-line color (white / yellow / cyan).
-5. Click **Export MV…** and choose where to save. Progress is shown; **Cancel export** works at any time and leaves no partial file.
+4. **Output settings**: **Use depth background animation** uses the depth parameters in Settings. Enable **Image motion** as well to combine depth motion with pan and zoom; either can also be used on its own. Preview uses prepared masks; uncached images temporarily use pan and zoom or still images according to **Image motion**. You can also choose resolution (540p / 720p / 1080p, 30 fps), subtitle size, position and color.
+5. Click **Export MV…** and choose where to save. Missing depth masks are prepared first; export stops with a message if the model or runtime is unavailable or preparation fails. Progress is shown; **Cancel export** works at any time and leaves no partial file.
 
 The output is an MP4 (H.264 video, AAC audio).
 
