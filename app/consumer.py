@@ -52,6 +52,13 @@ from runtime_config import ROOT
 DEPTH_STATUS_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
+def guitar_plugin_enabled(settings, root=ROOT):
+    """New installs default off; preserve existing users who installed the plugin."""
+    if 'guitar_plugin_enabled' in settings:
+        return bool(settings['guitar_plugin_enabled'])
+    return (Path(root) / '.runtime/guitar/karamorph-guitar.ready').is_file()
+
+
 class DepthParameterSpinBox(QSpinBox):
     """Let the settings page scroll without changing animation values."""
     def wheelEvent(self, event):
@@ -250,7 +257,7 @@ class ConsumerWindow(QMainWindow):
         from app.plugins.guitar.widget import GuitarWidget
         self.guitar = GuitarWidget(self)
         tabs.addTab(self.guitar, t('吉他彈唱'))
-        tabs.setTabVisible(tabs.indexOf(self.guitar), bool(self.settings.get('guitar_plugin_enabled', True)))
+        tabs.setTabVisible(tabs.indexOf(self.guitar), guitar_plugin_enabled(self.settings, ROOT))
         tabs.addTab(self.settings_page, t('設定'))
         language_panel = QWidget(tabs)
         language_layout = QHBoxLayout(language_panel)
@@ -694,7 +701,7 @@ class ConsumerWindow(QMainWindow):
         cache_hint.setWordWrap(True)
         animation_form.addRow(cache_hint)
         self.guitar_enabled = QCheckBox(t('啟用吉他彈唱插件'))
-        self.guitar_enabled.setChecked(bool(self.settings.get('guitar_plugin_enabled', True)))
+        self.guitar_enabled.setChecked(guitar_plugin_enabled(self.settings, ROOT))
         self.image_receiver_percent = QSpinBox()
         self.image_receiver_percent.setRange(10, 30)
         self.image_receiver_percent.setSuffix('%')

@@ -2,7 +2,7 @@
 
 [English](GUITAR.md) · [繁體中文](GUITAR.zh-TW.md) · [日本語](GUITAR.ja.md)
 
-Open **Guitar practice** between MV export and Settings. Before first use, select **Install / repair guitar plugin** under **Settings → Plugin management**. LV-Chordia and its CPU runtime are downloaded to `.runtime/guitar`, independently of the existing separation and styling environments. Installation needs network access and disk space; recognition then runs locally. The same settings section enables or disables the plugin.
+On a fresh installation, **Guitar practice** is disabled and the plugin is not downloaded automatically. Under **Settings → Plugin management**, enable the plugin and save Settings; its tab appears between MV export and Settings. Before first use, select **Install / repair guitar plugin** in the same section. LV-Chordia and its CPU runtime are downloaded to `.runtime/guitar`, independently of the existing separation and styling environments. Installation needs network access and disk space; recognition then runs locally. Existing users who already installed the plugin retain access unless they saved an explicit disabled setting.
 
 Generation, cancellation, chart version, capo, smoothing and PDF export share one row, with playback controls underneath. **Edit chords** is collapsed by default. Chord diagrams appear above their corresponding lyrics with spacing to avoid overlap; click a diagram to seek. Strings run from low E on the left to high E on the right; × means muted, ○ means open, and 1–4 indicate fingers. A number at the left indicates the starting fret relative to the capo.
 

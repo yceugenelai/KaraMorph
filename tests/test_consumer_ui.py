@@ -414,6 +414,38 @@ class ConsumerUiTests(unittest.TestCase):
         self.assertFalse(tabs.isTabVisible(index))
         self.assertFalse(self.window.settings['guitar_plugin_enabled'])
 
+    def test_fresh_install_hides_guitar_until_enabled_and_saved(self):
+        with patch('app.consumer.ROOT',self.root):
+            window = ConsumerWindow()
+            try:
+                tabs = window.centralWidget()
+                index = tabs.indexOf(window.guitar)
+                self.assertFalse(tabs.isTabVisible(index))
+                self.assertFalse(window.guitar_enabled.isChecked())
+                source = self.root/'new_input'
+                source.mkdir()
+                window.source_field.setText(str(source))
+                window.guitar_enabled.setChecked(True)
+                with patch.object(window,'scan_library'):
+                    window.save_settings()
+                self.assertTrue(tabs.isTabVisible(index))
+                self.assertTrue(window.settings['guitar_plugin_enabled'])
+            finally:
+                window.close()
+                window.deleteLater()
+                self.app.processEvents()
+
+    def test_installed_guitar_migration_respects_explicit_choice(self):
+        from app.consumer import guitar_plugin_enabled
+        self.assertFalse(guitar_plugin_enabled({},self.root))
+        marker = self.root/'.runtime/guitar/karamorph-guitar.ready'
+        marker.parent.mkdir(parents=True)
+        marker.touch()
+        self.assertTrue(guitar_plugin_enabled({},self.root))
+        self.assertFalse(guitar_plugin_enabled({'guitar_plugin_enabled':False},self.root))
+        marker.unlink()
+        self.assertTrue(guitar_plugin_enabled({'guitar_plugin_enabled':True},self.root))
+
     def test_strength_change_preserves_preprocessed_indicator(self):
         from app.consumer import DEPTH_STATUS_ROLE
         from app.depth_cache import remember
