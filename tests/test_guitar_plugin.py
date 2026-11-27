@@ -3,14 +3,15 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
-from PySide6.QtCore import QBuffer, QEventLoop, QIODevice, QSize, QTimer, QUrl
+from PySide6.QtCore import QBuffer, QEventLoop, QIODevice, QPoint, QSize, QTimer, QUrl
 from PySide6.QtGui import QImage, QTextCursor, QTextDocument
 from PySide6.QtWidgets import QApplication
 from app.lyrics import Timeline
-from app.plugins.guitar.widget import GuitarWidget, header_path, result_path, shape, sheet_lines, source_signature
+from app.plugins.guitar.widget import (AlignmentDialog, GuitarWidget, alignment_text, parse_alignment_text, header_path, lyric_line_key, lyric_positions,
+                                       result_path, shape, sheet_lines, source_signature)
 from app.storage import atomic_json
 
 class GuitarPluginTests(unittest.TestCase):
@@ -242,6 +243,161 @@ class GuitarPluginTests(unittest.TestCase):
         rect=self.widget.sheet.cursorRect(cursor)
         self.assertGreaterEqual(rect.top(),0)
         self.assertLessEqual(rect.bottom(),self.widget.sheet.viewport().height())
+
+    def test_scrolls_before_current_diagram_leaves_view(self):
+        self.widget.payload=self.payload()
+        self.widget.payload['duration']=12.
+        self.widget.payload['simple']=[{'start':float(i),'end':float(i+1),'chord':'C'} for i in range(12)]
+        self.widget.timeline=Timeline([i*1000 for i in range(12)],[str(i) for i in range(12)])
+        self.widget.resize(850,800); self.widget.show(); self.widget._render()
+        self.app.processEvents()
+        bar=self.widget.sheet.verticalScrollBar()
+        bar.setValue(0)
+        viewport=self.widget.sheet.viewport().height()
+        threshold=viewport-2*(113+26)
+        candidates=[]
+        for event in self.widget.diagram_events[1:]:
+            cursor=QTextCursor(self.widget.sheet.document()); cursor.setPosition(event['position'])
+            rect=self.widget.sheet.cursorRect(cursor)
+            if rect.top() >= threshold and rect.bottom() <= viewport-8:
+                candidates.append(event)
+        self.assertTrue(candidates,'expected a fully visible diagram in the penultimate row')
+        self.widget._position(round(candidates[0]['start']*1000))
+        self.app.processEvents()
+        self.assertGreater(bar.value(),0,'scroll should advance before the diagram is clipped')
+
+    def test_manual_alignment_is_saved_and_does_not_change_chord_timing(self):
+        self.widget.payload=self.payload()
+        self.widget.timeline=Timeline([0,4000],['一二三四五六','下一句'])
+        self.widget._render()
+        original=[dict(row) for row in self.widget.payload['simple']]
+        self.widget.table.selectRow(1)
+        with patch('app.plugins.guitar.widget.AlignmentDialog') as dialog:
+            dialog.return_value.exec.return_value=1; dialog.return_value.positions=[0,4]
+            self.widget.align_chord()
+        saved=json.loads(result_path(self.controller.workspace,'song','instrumental').read_text(encoding='utf-8'))
+        self.assertEqual(saved['simple'],original)
+        edits=saved['alignment_edits']['simple']
+        self.assertEqual(next(iter(edits.values()))['character'],4)
+        self.assertIn('一二三四',self.widget.sheet.toHtml())
+        self.assertIn('五六',self.widget.sheet.toHtml())
+        self.assertEqual([event['start'] for event in self.widget.diagram_events],[0.,2.])
+        with patch('app.plugins.guitar.widget.load_selected',return_value=('',self.widget.timeline,{'offsets':{}},'')):
+            self.widget._version_changed()
+        self.assertEqual(self.widget.payload['alignment_edits']['simple'],edits)
+        self.widget.table.selectRow(1)
+        with patch('app.plugins.guitar.widget.AlignmentDialog') as dialog:
+            dialog.return_value.exec.return_value=1; dialog.return_value.positions=[0,3]
+            self.widget.align_chord()
+        self.assertFalse(self.widget.payload['alignment_edits']['simple'])
+        self.assertEqual(self.widget.payload['simple'],original)
+
+    def test_move_remaining_chords_to_line_end_and_restore(self):
+        self.widget.payload=self.payload()
+        self.widget.payload['duration']=5.
+        self.widget.payload['simple']=[{'start':float(i),'end':float(i+1),'chord':chord}
+                                       for i,chord in enumerate(['C','G','Am','F','D'])]
+        self.widget.timeline=Timeline([0,5000],['這句已經唱完','下一句'])
+        original=[dict(row) for row in self.widget.payload['simple']]
+        self.widget._render(); self.widget.table.selectRow(2)
+        with patch('app.plugins.guitar.widget.AlignmentDialog') as dialog:
+            dialog.return_value.exec.return_value=1; dialog.return_value.positions=[0,1,6,6,6]
+            self.widget.align_chord()
+        saved=json.loads(result_path(self.controller.workspace,'song','instrumental').read_text(encoding='utf-8'))
+        self.assertEqual(saved['simple'],original)
+        edits=saved['alignment_edits']['simple']
+        self.assertEqual(len(edits),3)
+        self.assertTrue(all(value['character']==len('這句已經唱完') for value in edits.values()))
+        self.assertEqual([event['start'] for event in self.widget.diagram_events],[0.,1.,2.,3.,4.])
+        self.widget._position(3500)
+        self.assertEqual(self.widget.diagram_events[self.widget.active_diagram]['start'],3.)
+        with patch('app.plugins.guitar.widget.load_selected',return_value=('',self.widget.timeline,{'offsets':{}},'')):
+            self.widget._version_changed()
+        self.assertEqual(self.widget.payload['alignment_edits']['simple'],edits)
+        self.widget.table.selectRow(2)
+        with patch('app.plugins.guitar.widget.AlignmentDialog') as dialog:
+            dialog.return_value.exec.return_value=1; dialog.return_value.positions=[0,1,2,3,4]
+            self.widget.align_chord()
+        self.assertFalse(self.widget.payload['alignment_edits']['simple'])
+        self.assertEqual(self.widget.payload['simple'],original)
+
+    def test_alignment_positions_preserve_text_order_and_ignore_changed_lyrics(self):
+        events=[{'start':0.,'_alignment_key':'a'},{'start':2.,'_alignment_key':'b'}]
+        text='一二三四五六'
+        tag=lyric_line_key(0.,text,1.,0)
+        edits={'b|'+tag:{'line':tag,'character':4}}
+        self.assertEqual(lyric_positions(events,text,0.,4.,edits,tag),[0,4])
+        changed=lyric_line_key(0.,text+'七',1.,0)
+        self.assertEqual(lyric_positions(events,text+'七',0.,4.,edits,changed),[0,3])
+        self.assertEqual(lyric_line_key(1.,text,1.,0),lyric_line_key(1.25,text,1.,250))
+
+    def test_alignment_editor_validates_markers_and_escaped_lyric_characters(self):
+        text='開|中\\尾'
+        positions=[0,2,5,5]
+        encoded=alignment_text(text,positions)
+        self.assertEqual(parse_alignment_text(encoded,text,4),positions)
+        self.assertIsNone(parse_alignment_text(encoded+'|',text,4))
+        self.assertIsNone(parse_alignment_text(encoded+'字',text,4))
+        dialog=AlignmentDialog(self.widget,text,[{'chord':'C'}]*4,positions,[0,1,2,3],0)
+        dialog.edit.setText(encoded+'|'); dialog.accept()
+        self.assertTrue(dialog.error.text())
+        self.assertNotEqual(dialog.result(),1)
+        dialog.edit.setText(encoded); dialog.accept()
+        self.assertEqual(dialog.positions,positions)
+        self.assertEqual(dialog.result(),1)
+
+    def test_alignment_of_held_chord_can_be_saved_for_each_line(self):
+        self.widget.payload=self.payload()
+        self.widget.timeline=Timeline([0,1000,4000],['第一句','第二句','結尾'])
+        self.widget._render(); self.widget.table.selectRow(0)
+        def choose_line(_p,_t,_l,choices,_c,_e): return choices[1],True
+        with patch('app.plugins.guitar.widget.QInputDialog.getItem',side_effect=choose_line), patch('app.plugins.guitar.widget.AlignmentDialog') as dialog:
+            dialog.return_value.exec.return_value=1; dialog.return_value.positions=[1,1]
+            self.widget.align_chord()
+        self.widget.table.selectRow(0)
+        with patch('app.plugins.guitar.widget.QInputDialog.getItem',side_effect=lambda _p,_t,_l,choices,_c,_e:(choices[0],True)), patch('app.plugins.guitar.widget.AlignmentDialog') as dialog:
+            dialog.return_value.exec.return_value=1; dialog.return_value.positions=[1]
+            self.widget.align_chord()
+        self.assertEqual(len(self.widget.payload['alignment_edits']['simple']),2)
+
+    def test_right_click_diagram_edits_the_displayed_line_of_a_held_chord(self):
+        self.widget.payload=self.payload()
+        self.widget.timeline=Timeline([0,1000,4000],['第一句','第二句','結尾'])
+        self.widget.resize(850,800); self.widget.show(); self.widget._render(); self.app.processEvents()
+        event=next(event for event in self.widget.diagram_events if event['line_index']==1)
+        cursor=QTextCursor(self.widget.sheet.document()); cursor.setPosition(event['position'])
+        point=self.widget.sheet.cursorRect(cursor).topLeft()+QPoint(10,30)
+        self.assertEqual(self.widget.sheet.anchorAt(point),'guitar-chord:1')
+        with patch.object(self.widget.player,'setPosition') as seek:
+            self.widget._diagram_clicked(QUrl(self.widget.sheet.anchorAt(point)))
+            seek.assert_called_once_with(1000)
+        original=[dict(row) for row in self.widget.payload['simple']]
+        with patch('app.plugins.guitar.widget.QMenu') as menu, patch('app.plugins.guitar.widget.AlignmentDialog') as dialog, patch('app.plugins.guitar.widget.QInputDialog.getItem') as line_prompt:
+            menu.return_value.exec.return_value=menu.return_value.addAction.return_value
+            dialog.return_value.exec.return_value=1; dialog.return_value.positions=[1,1]
+            self.widget._sheet_context_menu(point)
+            self.assertEqual(dialog.call_args.args[1],'第二句')
+            line_prompt.assert_not_called()
+        saved=json.loads(result_path(self.controller.workspace,'song','instrumental').read_text(encoding='utf-8'))
+        self.assertEqual(saved['simple'],original)
+        self.assertEqual(len(saved['alignment_edits']['simple']),1)
+        self.assertEqual(next(iter(saved['alignment_edits']['simple'].values()))['line'],lyric_line_key(1.,'第二句',1.,0))
+
+    def test_regenerating_archives_alignment_only_edits(self):
+        target=result_path(self.controller.workspace,'song','instrumental')
+        old=self.payload(); old['alignment_edits']={'simple':{'key':{'line':'x','character':2}}}
+        atomic_json(target,old)
+        temporary=target.with_name('incoming.tmp')
+        atomic_json(temporary,self.payload())
+        self.widget.process=Mock()
+        self.widget.process.readAllStandardError.return_value=b''
+        self.widget.process.readAllStandardOutput.return_value=b''
+        self.widget.pending=(temporary,target,source_signature(self.backing),self.backing)
+        self.widget.operation='generate'
+        self.widget._finished(0,None)
+        archives=list((target.parent/'history').glob('*.json'))
+        self.assertEqual(len(archives),1)
+        self.assertEqual(json.loads(archives[0].read_text(encoding='utf-8'))['alignment_edits'],old['alignment_edits'])
 
     def test_original_and_backing_use_their_saved_lyric_offsets(self):
         state={'offsets':{'original':250,'instrumental':-100}}

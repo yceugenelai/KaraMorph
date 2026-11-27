@@ -6,7 +6,13 @@ On a fresh installation, **Guitar practice** is disabled and the plugin is not d
 
 Generation, cancellation, chart version, capo, smoothing and PDF export share one row, with playback controls underneath. **Edit chords** is collapsed by default. Chord diagrams appear above their corresponding lyrics with spacing to avoid overlap; click a diagram to seek. Strings run from low E on the left to high E on the right; × means muted, ○ means open, and 1–4 indicate fingers. A number at the left indicates the starting fret relative to the capo.
 
-Choose small, medium or large diagrams; small is the default, and the selection is saved with the chart. During playback the current diagram has a gold background, border and dot, including no-chord sections in the intro. Automatic scrolling keeps the active diagram visible.
+Choose small, medium or large diagrams; small is the default, and the selection is saved with the chart. During playback the current diagram has a gold background, border and dot, including no-chord sections in the intro. When there is room for at least two rows, the chart scrolls near the penultimate visible row so the next section is available earlier.
+
+To adjust a line, select one of its chords under **Edit chords** and choose **Align chord with lyrics…**. If it spans multiple lines, choose the line first. Move the `|` markers in the lyric text to adjust all chords at once, in the chord order shown above the editor. For example, `|words|end|||` places the last three chords after the lyrics. Keep the lyric text and marker count unchanged; literal `|` and backslash characters appear as `\|` and `\\`. Use **Restore automatic placement**, then save, to reset the line.
+
+Alternatively, right-click a chord diagram and choose **Edit all chord positions in this line…** to edit that diagram's lyric line directly. Left-clicking still seeks playback.
+
+This changes chart layout only, not chord or lyric playback times. Use the Assets timing tool if an entire lyric line is mistimed. Adjustments are saved per song version and chart mode; old adjustments are retained but not applied when the lyric text, timing or chord interval no longer matches.
 
 The chart header uses the thumbnail selected in the song's image assets, falling back to its embedded cover. Expand **Edit chart information** below the chart to set a title, artist, note and chart-specific image for this song version; saving does not change the music file or its original thumbnail setting. **Export PDF…** saves the selected chart, capo shapes, lyrics and header as an automatically paginated A4 PDF. The playback highlight is omitted. Generate a chart before exporting.
 

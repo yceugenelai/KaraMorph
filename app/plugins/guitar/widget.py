@@ -11,8 +11,8 @@ import uuid
 from PySide6.QtCore import QMarginsF, QProcess, Qt, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaPlayer
 from PySide6.QtGui import QImage, QPageLayout, QPageSize, QPdfWriter, QTextCursor, QTextDocument
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout,
-    QInputDialog, QLabel, QLineEdit, QPushButton, QSlider, QSpinBox, QTableWidget,
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QMenu, QPushButton, QSlider, QSpinBox, QTableWidget,
     QTableWidgetItem, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 from app.i18n import t
 from app.lyrics import effective_speed, load_selected
@@ -31,6 +31,73 @@ CHORD = re.compile(r'^(?:N|[A-G](?:#|b)?[A-Za-z0-9+#b()/,\-]*)$')
 
 def edit_key(row):
     return f"{row['start']:.3f}:{row['end']:.3f}:{row['chord']}"
+
+def lyric_line_key(start,text,speed,delay):
+    original_ms = round((start*1000-delay)*speed)
+    return f"{original_ms}:{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}"
+
+def lyric_positions(events,text,start,end,edits,line_key):
+    """Get ordered character positions without changing chord playback times."""
+    positions = []
+    for event in events:
+        estimated = max(0,min(len(text),int((event['start']-start)/max(.001,end-start)*len(text))))
+        override = edits.get(event.get('_alignment_key','')+'|'+line_key)
+        if isinstance(override,dict) and override.get('line') == line_key and type(override.get('character')) is int:
+            estimated = max(0,min(len(text),override['character']))
+        positions.append(max(positions[-1] if positions else 0,estimated))
+    return positions
+
+def alignment_text(text,positions):
+    """Insert markers, escaping literal backslashes and vertical bars in lyrics."""
+    parts = []
+    for index in range(len(text)+1):
+        parts.append('|' * positions.count(index))
+        if index < len(text):
+            parts.append(text[index].replace('\\','\\\\').replace('|','\\|'))
+    return ''.join(parts)
+
+def parse_alignment_text(value,text,count):
+    lyric, positions = [], []
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char == '\\':
+            index += 1
+            if index >= len(value) or value[index] not in '\\|':
+                return None
+            lyric.append(value[index])
+        elif char == '|':
+            positions.append(len(lyric))
+        else:
+            lyric.append(char)
+        index += 1
+    return positions if ''.join(lyric) == text and len(positions) == count else None
+
+class AlignmentDialog(QDialog):
+    def __init__(self,parent,text,events,positions,automatic,capo):
+        super().__init__(parent)
+        self.setWindowTitle(t('調整和弦對齊歌詞'))
+        self.resize(720,180)
+        layout = QVBoxLayout(self)
+        instructions = QLabel(t('依序移動 | 調整所有和弦的位置；不可修改歌詞或增減 |。歌詞中的 | 和反斜線以 \\| 和 \\\\ 表示。'))
+        instructions.setWordWrap(True); layout.addWidget(instructions)
+        names = '  →  '.join(f'{i+1}. {shape(event["chord"],capo)}' for i,event in enumerate(events))
+        order = QLabel(t('和弦順序：{p0}',p0=names)); order.setWordWrap(True); layout.addWidget(order)
+        self.edit = QLineEdit(alignment_text(text,positions)); layout.addWidget(self.edit)
+        self.error = QLabel(); self.error.setWordWrap(True); layout.addWidget(self.error)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        reset = buttons.addButton(t('恢復自動估算'),QDialogButtonBox.ButtonRole.ResetRole)
+        reset.clicked.connect(lambda: self.edit.setText(alignment_text(text,automatic)))
+        buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject); layout.addWidget(buttons)
+        self.text, self.count = text, len(events)
+        self.positions = None
+
+    def accept(self):
+        self.positions = parse_alignment_text(self.edit.text(),self.text,self.count)
+        if self.positions is None:
+            self.error.setText(t('請保留完整歌詞，並確保 | 的數量與和弦數相同。'))
+            return
+        super().accept()
 
 def shape(chord, fret):
     def shift(match):
@@ -162,7 +229,9 @@ class GuitarWidget(QWidget):
         display = QHBoxLayout()
         self.sheet = QTextBrowser(); self.sheet.setOpenLinks(False)
         self.sheet.setToolTip(t('標準調弦，左至右為第六弦到第一弦；數字為手指編號，格數相對 Capo。'))
-        self.sheet.anchorClicked.connect(lambda url: self.player.setPosition(int(float(url.toString())*1000)))
+        self.sheet.anchorClicked.connect(self._diagram_clicked)
+        self.sheet.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.sheet.customContextMenuRequested.connect(self._sheet_context_menu)
         display.addWidget(self.sheet,1)
         layout.addLayout(display,1)
         self.edit_section = CollapsibleSection(t('修正和弦'))
@@ -179,7 +248,14 @@ class GuitarWidget(QWidget):
         edit_layout.addWidget(self.table)
         self.restore = QPushButton(t('還原先前譜面'))
         self.restore.clicked.connect(self.restore_history)
-        edit_layout.addWidget(self.restore)
+        edit_buttons = QHBoxLayout()
+        self.align_button = QPushButton(t('調整和弦對齊歌詞…'))
+        self.align_button.setToolTip(t('編輯整句歌詞中的 |，一次調整該句的和弦位置。'))
+        self.align_button.clicked.connect(self.align_chord)
+        edit_buttons.addWidget(self.align_button)
+        edit_buttons.addWidget(self.restore)
+        edit_buttons.addStretch(1)
+        edit_layout.addLayout(edit_buttons)
         edit_layout.addWidget(QLabel(t('點選和弦跳轉；雙擊列表修改並保存目前譜面版本的和弦。句內位置依 LRC 時間估算。')))
         layout.addWidget(self.edit_section)
         self.header_section = CollapsibleSection(t('修改譜面資訊'))
@@ -462,7 +538,8 @@ class GuitarWidget(QWidget):
         if not self.payload: return []
         mode = self.mode.currentData()
         edits = self.payload.get('edits',{}).get(mode,{})
-        return [{**row,'chord':edits.get(edit_key(row),row['chord'])} for row in self.payload.get(mode,[])]
+        return [{**row,'chord':edits.get(edit_key(row),row['chord']),'_alignment_key':edit_key(row)}
+                for row in self.payload.get(mode,[])]
 
     def _capo_changed(self):
         if self.payload and self.song.currentData() and self.version.currentData():
@@ -537,7 +614,9 @@ class GuitarWidget(QWidget):
             end = lines[i+1][0] if i+1 < len(lines) else duration
             if not events:
                 pieces.append(f'<p><a name="line{i}"></a>{html.escape(text) or "&nbsp;"}</p>'); continue
-            indices = [max(0,min(len(text),int((s['start']-start)/max(.001,end-start)*len(text)))) for s in events]
+            alignment = (self.payload or {}).get('alignment_edits',{}).get(self.mode.currentData(),{})
+            line_key = lyric_line_key(start,text,self.speed,self.delay)
+            indices = lyric_positions(events,text,start,end,alignment,line_key)
             cells = []
             if indices[0]: cells.append(('',html.escape(text[:indices[0]])))
             for j,event in enumerate(events):
@@ -557,8 +636,8 @@ class GuitarWidget(QWidget):
                 self.diagram_events.append({'start':event['start'],'end':min(event['end'],next_start,end),
                     'url':url,'normal':variants[name][0],'active':variants[name][1],
                     'anchor':'chord'+str(number),'position':None,'name':name,
-                    'voicing':variants[name][2],'generated':variants[name][3]})
-                chord = (f'<a name="chord{number}"></a><a href="{event["start"]:.3f}">'
+                    'voicing':variants[name][2],'generated':variants[name][3], 'line_index':i, 'has_lyrics':bool(text)})
+                chord = (f'<a name="chord{number}"></a><a href="guitar-chord:{number}">'
                          f'<img src="{url}" width="{image_width}" height="{image_height}" /></a>')
                 cells.append((chord,html.escape(text[indices[j]:stop]) or '&nbsp;'))
             pieces.append(f'<a name="line{i}"></a>')
@@ -599,6 +678,72 @@ class GuitarWidget(QWidget):
         segments = self._segments()
         if 0 <= row < len(segments): self.player.setPosition(round(segments[row]['start']*1000))
 
+    def _diagram_for_link(self, link):
+        match = re.fullmatch(r'guitar-chord:(\d+)',link)
+        index = int(match.group(1)) if match else -1
+        return self.diagram_events[index] if 0 <= index < len(self.diagram_events) else None
+
+    def _diagram_clicked(self,url):
+        event = self._diagram_for_link(url.toString())
+        if event: self.player.setPosition(round(event['start']*1000))
+
+    def _sheet_context_menu(self,position):
+        event = self._diagram_for_link(self.sheet.anchorAt(position))
+        if not event or not event['has_lyrics'] or not self.align_button.isEnabled():
+            menu = self.sheet.createStandardContextMenu(position)
+            menu.exec(self.sheet.viewport().mapToGlobal(position))
+            return
+        menu = QMenu(self.sheet)
+        action = menu.addAction(t('修改這句所有和弦位置…'))
+        if menu.exec(self.sheet.viewport().mapToGlobal(position)) == action:
+            lines = sheet_lines(self.timeline,self.speed,self.delay,self._segments(),self.payload.get('duration',0))
+            if 0 <= event['line_index'] < len(lines): self._align_line(lines,event['line_index'])
+
+    def align_chord(self):
+        row = self.table.currentRow()
+        segments = self._segments()
+        if row < 0 or row >= len(segments):
+            self.status.setText(t('請先在修正列表選擇一個和弦。')); return
+        if not self.timeline:
+            self.status.setText(t('請先在素材中設定逐句 LRC 歌詞。')); return
+        segment = segments[row]
+        lines = sheet_lines(self.timeline,self.speed,self.delay,segments,self.payload.get('duration',0))
+        candidates = [(i,start,text,events) for i,(start,text,events) in enumerate(lines)
+                      if text and any(event.get('_alignment_key') == segment['_alignment_key'] for event in events)]
+        if not candidates:
+            self.status.setText(t('這個和弦沒有對應的歌詞行；請先使用素材工具調整歌詞時間。')); return
+        selected = 0
+        if len(candidates) > 1:
+            choices = [f'{int(start//60)}:{int(start%60):02d} · {text}' for _,start,text,_ in candidates]
+            choice,ok = QInputDialog.getItem(self,t('選擇歌詞行'),t('這個和弦持續跨越多行，請選擇要調整的歌詞行：'),choices,0,False)
+            if not ok: return
+            selected = choices.index(choice)
+        self._align_line(lines,candidates[selected][0])
+
+    def _align_line(self,lines,line_index):
+        start,text,events = lines[line_index]
+        end = lines[line_index+1][0] if line_index+1 < len(lines) else self.payload['duration']
+        line_key = lyric_line_key(start,text,self.speed,self.delay)
+        mode = self.mode.currentData()
+        edits = self.payload.get('alignment_edits',{}).get(mode,{})
+        positions = lyric_positions(events,text,start,end,edits,line_key)
+        automatic = lyric_positions(events,text,start,end,{},line_key)
+        dialog = AlignmentDialog(self,text,events,positions,automatic,self.capo.value())
+        if dialog.exec() != QDialog.DialogCode.Accepted: return
+        all_edits = self.payload.setdefault('alignment_edits',{}).setdefault(mode,{})
+        previous = dict(all_edits)
+        for event,position,estimated in zip(events,dialog.positions,automatic):
+            key = event['_alignment_key']+'|'+line_key
+            if position == estimated: all_edits.pop(key,None)
+            else: all_edits[key] = {'line':line_key,'character':position}
+        try:
+            atomic_json(result_path(self.controller.workspace,self.song.currentData(),self.version.currentData()),self.payload)
+        except OSError as error:
+            all_edits.clear(); all_edits.update(previous)
+            self.status.setText(str(error)); return
+        self.status.setText(t('和弦與歌詞的對齊位置已儲存。'))
+        self._render()
+
     def edit_chord(self,row,_column):
         segments = self._segments()
         if not 0 <= row < len(segments): return
@@ -633,7 +778,7 @@ class GuitarWidget(QWidget):
         if index >= 0:
             chord = segments[index]['chord']; next_chord = segments[index+1]['chord'] if index+1 < len(segments) else '—'
             self.current.setText(t('目前：{p0}　下一個：{p1}\n{p2}',p0=shape(chord,self.capo.value()),p1=shape(next_chord,self.capo.value()),p2=lyric))
-            if self.table.currentRow() != index:
+            if not self.edit_section.toggle.isChecked() and self.table.currentRow() != index:
                 self.table.selectRow(index)
         else:
             self.current.setText(lyric)
@@ -657,10 +802,15 @@ class GuitarWidget(QWidget):
                     cursor.setPosition(position)
                     rect = self.sheet.cursorRect(cursor)
                     viewport = self.sheet.viewport().rect()
-                    if rect.top() < 8 or rect.bottom() > viewport.height()-8:
+                    height = {'small':113,'medium':129,'large':145}.get(self.diagram_size.currentData(),113)
+                    row_height = height + 26  # diagram plus its lyric and table spacing
+                    enough_room = viewport.height() >= row_height * 2
+                    near_bottom = (enough_room and rect.top() >= viewport.height() - 2 * row_height
+                                   and not (ms == 0 and self.sheet.verticalScrollBar().value() == 0)
+                                   and self.sheet.verticalScrollBar().value() < self.sheet.verticalScrollBar().maximum())
+                    if rect.top() < 8 or rect.bottom() > viewport.height()-8 or near_bottom:
                         self.sheet.scrollToAnchor(event['anchor'])
                         bar = self.sheet.verticalScrollBar()
-                        height = {'small':113,'medium':129,'large':145}.get(self.diagram_size.currentData(),113)
                         bar.setValue(max(0,bar.value()-height-12))
 
     def toggle_play(self):
@@ -681,7 +831,7 @@ class GuitarWidget(QWidget):
         self.player.stop()
 
     def _busy(self, busy):
-        for control in (self.generate,self.restore,self.recompute,self.table,self.song,self.version): control.setEnabled(not busy)
+        for control in (self.generate,self.restore,self.align_button,self.recompute,self.table,self.song,self.version): control.setEnabled(not busy)
         self.cancel.setEnabled(busy)
 
     def install_runtime(self):
@@ -776,17 +926,19 @@ class GuitarWidget(QWidget):
                     raise ValueError(t('音檔已變更，請重新產生和弦譜。'))
                 result['display_capo'] = self.capo.value()
                 result['diagram_size'] = self.diagram_size.currentData()
+                archived = False
                 if target.is_file():
                     old = json.loads(target.read_text(encoding='utf-8'))
-                    if old.get('edits'):
+                    if old.get('edits') or old.get('alignment_edits'):
                         archive = target.parent/'history'/(target.stem+'-'+uuid.uuid4().hex+'.json')
                         atomic_json(archive,old)
+                        archived = True
                 atomic_json(target,result)
                 sid, variant = self.song.currentData(), self.version.currentData()
                 if sid and variant and result_path(self.controller.workspace,sid,variant) == target:
                     self.payload = result
                     self.strength.setValue(float(result.get('analysis',{}).get('strength',1.)))
-                    self.status.setText(t('和弦譜已產生；先前手動修改保存在歷史檔案。') if target.is_file() and 'old' in locals() and old.get('edits') else t('和弦譜已產生。'))
+                    self.status.setText(t('和弦譜已產生；先前手動修改保存在歷史檔案。') if archived else t('和弦譜已產生。'))
                     self._render()
             else:
                 message = t('吉他插件安裝完成。')
