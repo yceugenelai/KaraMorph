@@ -32,6 +32,10 @@ Can't find the song you want in the karaoke catalog? Want to hear a familiar son
 - **Playlists and recording**: build your own singing playlist and record your performance with a microphone. [Details](docs/SINGING_RECORDING.md)
 - **Profiles**: add or switch profiles at the top right (and move them to another computer as a ZIP), so each person (or purpose) keeps their own volume preferences, playlist, best settings and recordings. [Details](docs/PROFILES.md)
 
+### Optional plugins
+
+- **Guitar practice**: generate and edit chord charts aligned with lyrics, then play along with the original or separated backing. Disabled on new installations; enable and install it in Settings. [Details](docs/GUITAR.md)
+
 ## Tested environment
 
 - Windows 11

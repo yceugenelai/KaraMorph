@@ -52,6 +52,13 @@ from runtime_config import ROOT
 DEPTH_STATUS_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
+def guitar_plugin_enabled(settings, root=ROOT):
+    """New installs default off; preserve existing users who installed the plugin."""
+    if 'guitar_plugin_enabled' in settings:
+        return bool(settings['guitar_plugin_enabled'])
+    return (Path(root) / '.runtime/guitar/karamorph-guitar.ready').is_file()
+
+
 class DepthParameterSpinBox(QSpinBox):
     """Let the settings page scroll without changing animation values."""
     def wheelEvent(self, event):
@@ -247,6 +254,10 @@ class ConsumerWindow(QMainWindow):
         tabs.addTab(self.process_page, t('處理歌曲'))
         self.mv_page = QWidget()
         tabs.addTab(self.mv_page, t('MV 匯出'))
+        from app.plugins.guitar.widget import GuitarWidget
+        self.guitar = GuitarWidget(self)
+        tabs.addTab(self.guitar, t('吉他彈唱'))
+        tabs.setTabVisible(tabs.indexOf(self.guitar), guitar_plugin_enabled(self.settings, ROOT))
         tabs.addTab(self.settings_page, t('設定'))
         language_panel = QWidget(tabs)
         language_layout = QHBoxLayout(language_panel)
@@ -280,6 +291,7 @@ class ConsumerWindow(QMainWindow):
         self._build_sing_page()
         self._build_process_page()
         self._build_mv_page()
+        tabs.currentChanged.connect(self._guitar_tab_changed)
         self._build_settings_page()
         self._closing = False
         self.work_timer = QTimer(self)
@@ -316,6 +328,9 @@ class ConsumerWindow(QMainWindow):
 
     def open_install_manager(self):
         if self.installation_active():
+            return
+        if self.guitar.process:
+            QMessageBox.information(self, t('管理安裝'), t('請先等待吉他插件目前的工作完成。'))
             return
         if self.playing_item or self.active_op or self.pending_ops or self.jobs.current or (self.models_dialog is not None and self.models_dialog.worker is not None):
             QMessageBox.information(self, t('管理安裝'), t('請先停止播放並等待處理完成。'))
@@ -685,6 +700,8 @@ class ConsumerWindow(QMainWindow):
         cache_hint = QLabel(t('調整強度或速度會沿用遮罩；調整覆蓋率、擴張或實心化後需重新預處理。'))
         cache_hint.setWordWrap(True)
         animation_form.addRow(cache_hint)
+        self.guitar_enabled = QCheckBox(t('啟用吉他彈唱插件'))
+        self.guitar_enabled.setChecked(guitar_plugin_enabled(self.settings, ROOT))
         self.image_receiver_percent = QSpinBox()
         self.image_receiver_percent.setRange(10, 30)
         self.image_receiver_percent.setSuffix('%')
@@ -698,6 +715,16 @@ class ConsumerWindow(QMainWindow):
         self.runtime_path_status = QLabel(t('執行元件與模型由模型管理頁檢查。'))
         self.runtime_path_status.setWordWrap(True)
         layout.addWidget(self._button(t('模型與元件管理'), self.open_models))
+        plugin_group = QGroupBox(t('插件管理'))
+        plugin_layout = QVBoxLayout(plugin_group)
+        plugin_layout.addWidget(self.guitar_enabled)
+        plugin_layout.addWidget(self._button(t('安裝／修復吉他插件'), self.guitar.install_runtime))
+        self.guitar_install_status = QLabel(t('吉他插件已安裝。') if (ROOT/'.runtime/guitar/karamorph-guitar.ready').is_file()
+                                           else t('吉他插件尚未安裝。'))
+        self.guitar_install_status.setWordWrap(True)
+        self.guitar.installation_status.connect(self.guitar_install_status.setText)
+        plugin_layout.addWidget(self.guitar_install_status)
+        layout.addWidget(plugin_group)
         if (ROOT / 'bootstrap-launcher.json').is_file():
             layout.addWidget(self._button(t('管理安裝'), self.open_install_manager))
         layout.addWidget(self.runtime_path_status)
@@ -1055,6 +1082,8 @@ class ConsumerWindow(QMainWindow):
         self.settings["background_mode"] = self.background_mode.currentData()
         self.settings['background_motion'] = self.background_motion.isChecked()
         self.settings['background_depth_motion'] = self.background_depth_motion.isChecked()
+        self.settings['guitar_plugin_enabled'] = self.guitar_enabled.isChecked()
+        self.centralWidget().setTabVisible(self.centralWidget().indexOf(self.guitar),self.guitar_enabled.isChecked())
         self.settings.update({'depth_' + key: field.value() for key, field in self.depth_fields.items()})
         self.settings['depth_solid'] = self.depth_solid.isChecked()
         self.settings['image_receiver_percent'] = self.image_receiver_percent.value()
@@ -1349,6 +1378,12 @@ class ConsumerWindow(QMainWindow):
         self.mv_song.currentIndexChanged.connect(lambda *_: self.mv.set_song(self.mv_song.currentData() or ''))
         self.centralWidget().currentChanged.connect(
             lambda _: self._refresh_mv_page() if self.centralWidget().currentWidget() is self.mv_page else None)
+
+    def _guitar_tab_changed(self, _index):
+        if self.centralWidget().currentWidget() is self.guitar:
+            self.guitar.refresh()
+        else:
+            self.guitar.stop_playback()
 
     def _refresh_mv_page(self):
         if self.mv.job or self.mv.preparing_depth:
@@ -1653,6 +1688,7 @@ class ConsumerWindow(QMainWindow):
             self._start_singing_from(start)
 
     def _play_from(self, start):
+        self.guitar.stop_playback()
         self.microphone.finish_recording()
         self.microphone.resume()
         self._stop_preview()
@@ -1799,6 +1835,10 @@ class ConsumerWindow(QMainWindow):
             self.info.setToolTip(message)
 
     def closeEvent(self, event):
+        if self.guitar.process and self.guitar.operation == 'install':
+            QMessageBox.information(self, t('管理安裝'), t('吉他插件安裝中，請等待完成。'))
+            event.ignore()
+            return
         if self.installation_active():
             QMessageBox.information(self, t('管理安裝'), t('安裝管理中，請先關閉安裝視窗。'))
             event.ignore()
@@ -1809,6 +1849,7 @@ class ConsumerWindow(QMainWindow):
             return
         self._closing = True
         self.mv.dispose()
+        self.guitar.dispose()
         self.flush_audio_preferences()
         self._save_last_queue()
         self.lyric_lookup.cancel()
@@ -2036,6 +2077,7 @@ class ConsumerWindow(QMainWindow):
             self.preview_version(*key)
 
     def preview_version(self, song_id, variant_id):
+        self.guitar.stop_playback()
         key = (song_id, variant_id)
         if self.current_preview_key == key:
             self._stop_preview()
