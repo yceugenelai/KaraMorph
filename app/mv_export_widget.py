@@ -690,6 +690,9 @@ class MvExportWidget(QWidget):
         source = self.current()
         if not source or self.job or self.preparing_depth:
             return
+        guitar = getattr(self.controller, 'guitar', None)
+        if guitar:
+            guitar.stop_playback()
         stop = getattr(self.controller, '_stop_preview', None)
         if stop:
             stop()

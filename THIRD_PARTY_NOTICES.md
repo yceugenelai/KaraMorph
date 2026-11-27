@@ -4,6 +4,8 @@ The MIT license covers KaraMorph-owned code only. Preserve model notices under `
 
 ## Reviewed components
 
+- Optional guitar practice installs **LV-Chordia 1.1.0**, its bundled weights, and dependencies separately in `.runtime/guitar`. The package's [upstream project](https://github.com/openmirlab/lv-chordia) identifies its code and bundled weights as MIT; preserve applicable notices for the package, PyTorch and their dependencies when redistributing an initialized runtime. The lightweight application does not bundle the weights.
+
 - Optional depth background motion uses **Depth Anything V2 Small** Transformers weights, whose [official model card](https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf) declares Apache-2.0. Only the pinned Small variant is used; other variants may have different terms. Weights are downloaded or imported separately, not included in the lightweight package.
 
 - Live playback speed/key uses **SoundTouch 2.3.3** (LGPL-2.1-or-later) through a replaceable x64 DLL. The lightweight ZIP includes the binding, preparation script and [upstream license](docs/licenses/SoundTouch-LICENSE), but no SoundTouch binary. Setup downloads the official archive and verifies its pinned SHA-256; installed copyright/license files stay beside the DLL. Upstream source: https://codeberg.org/soundtouch/soundtouch. Redistributing an initialized installation needs a separate review of LGPL source/replacement obligations.

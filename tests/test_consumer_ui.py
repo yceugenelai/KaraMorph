@@ -400,6 +400,20 @@ class ConsumerUiTests(unittest.TestCase):
             self.assertEqual(item.data(1, DEPTH_STATUS_ROLE), 'partial')
             self.assertIn('1／2', item.toolTip(1))
 
+    def test_guitar_plugin_tab_follows_mv_and_can_be_disabled(self):
+        tabs = self.window.centralWidget()
+        index = tabs.indexOf(self.window.guitar)
+        self.assertEqual(index, tabs.indexOf(self.window.mv_page) + 1)
+        self.assertEqual(index + 1, tabs.indexOf(self.window.settings_page))
+        source = self.root / 'input'
+        source.mkdir()
+        self.window.source_field.setText(str(source))
+        self.window.guitar_enabled.setChecked(False)
+        with patch.object(self.window, 'scan_library'):
+            self.window.save_settings()
+        self.assertFalse(tabs.isTabVisible(index))
+        self.assertFalse(self.window.settings['guitar_plugin_enabled'])
+
     def test_strength_change_preserves_preprocessed_indicator(self):
         from app.consumer import DEPTH_STATUS_ROLE
         from app.depth_cache import remember
